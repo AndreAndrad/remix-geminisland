@@ -144,9 +144,46 @@ export type PlaceCatalogItemResult =
       path?: WorldPath;
       villager?: WorldVillager;
       prop?: WorldProp;
+      extraPropId?: string;
       world: WorldStateSnapshot;
     }
   | { ok: false; status: 400 | 404 | 429; error: string };
+
+export interface RemoveCatalogItemInput {
+  kind: CatalogItemKind;
+  id: string;
+  extraPropId?: string | null;
+  cookieId: string;
+  dayKey: string;
+}
+
+export type RemoveCatalogItemResult =
+  | {
+      ok: true;
+      kind: CatalogItemKind;
+      id: string;
+      name: string;
+      x: number;
+      z: number;
+      world: WorldStateSnapshot;
+    }
+  | { ok: false; status: 400 | 403 | 404; error: string };
+
+export interface ReplaceCatalogItemInput {
+  targetKind: CatalogItemKind;
+  targetId: string;
+  extraPropId?: string | null;
+  newPresetId: string;
+  cookieId: string;
+  dayKey: string;
+}
+
+export type ReplaceCatalogItemResult =
+  | (Extract<PlaceCatalogItemResult, { ok: true }> & {
+      replacedId: string;
+      replacedName: string;
+    })
+  | { ok: false; status: 400 | 403 | 404 | 429; error: string };
 
 export interface EnqueueBuildInput {
   ipHash: string;
@@ -2108,6 +2145,7 @@ export class WorldStore {
     let finalX = x;
     let finalZ = z;
     let yaw = 0;
+    let autoCreatedPondId: string | undefined;
 
     const chainConnectedUnclosedPaths = (
       seedPath: WorldPath,
@@ -2318,8 +2356,9 @@ export class WorldStore {
         // Inland away from water — create a scenic natural lake beneath the boat so it floats!
         const lakeRadius = 6.6;
         if (this.props.length < 340) {
+          autoCreatedPondId = `user-pond-boat-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 5)}`;
           this.props.push({
-            id: `user-pond-boat-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 5)}`,
+            id: autoCreatedPondId,
             kind: "pond",
             x: px,
             z: pz,
@@ -2429,7 +2468,156 @@ export class WorldStore {
       x: updatedCreation.x,
       z: updatedCreation.z,
       creation: updatedCreation,
+      ...(autoCreatedPondId ? { extraPropId: autoCreatedPondId } : {}),
       world: snap,
+    };
+  }
+
+  public removeCatalogItem(input: RemoveCatalogItemInput): RemoveCatalogItemResult {
+    const cleanId = typeof input.id === "string" ? input.id.trim() : "";
+    if (!/^[a-zA-Z0-9_-]{2,80}$/.test(cleanId)) {
+      return { ok: false, status: 400, error: "Identificador de item inválido." };
+    }
+
+    let removedName = "";
+    let removedX = 0;
+    let removedZ = 0;
+
+    if (input.kind === "creation") {
+      const idx = this.creations.findIndex((c) => c.id === cleanId);
+      if (idx < 0) {
+        return { ok: false, status: 404, error: "Item não encontrado na ilha." };
+      }
+      const target = this.creations[idx];
+      if (target.isSeed || target.isCompanion) {
+        return {
+          ok: false,
+          status: 403,
+          error: "Este marco original da ilha não pode ser excluído.",
+        };
+      }
+      removedName = target.name;
+      removedX = target.x;
+      removedZ = target.z;
+      this.creations.splice(idx, 1);
+
+      if (
+        typeof input.extraPropId === "string" &&
+        /^user-pond-[a-zA-Z0-9_-]{2,64}$/.test(input.extraPropId)
+      ) {
+        const pIdx = this.props.findIndex((p) => p.id === input.extraPropId);
+        if (pIdx >= 0) this.props.splice(pIdx, 1);
+      }
+    } else if (input.kind === "road") {
+      const idx = this.paths.findIndex((p) => p.id === cleanId);
+      if (idx < 0) {
+        return { ok: false, status: 404, error: "Estrada ou rio não encontrado na ilha." };
+      }
+      const target = this.paths[idx];
+      if (!target.id.startsWith("user-")) {
+        return {
+          ok: false,
+          status: 403,
+          error: "As vias originais da ilha não podem ser excluídas.",
+        };
+      }
+      const midPt = target.points[Math.floor(target.points.length / 2)] ?? target.points[0] ?? [0, 0];
+      removedName =
+        target.kind === "river"
+          ? "Rio Cristalino"
+          : target.kind === "creek"
+            ? "Riacho com Pedras"
+            : "Estrada";
+      removedX = midPt[0];
+      removedZ = midPt[1];
+      this.paths.splice(idx, 1);
+    } else if (input.kind === "pond") {
+      const idx = this.props.findIndex((p) => p.id === cleanId && p.kind === "pond");
+      if (idx < 0) {
+        return { ok: false, status: 404, error: "Lago não encontrado na ilha." };
+      }
+      const target = this.props[idx];
+      if (!target.id.startsWith("user-pond-")) {
+        return {
+          ok: false,
+          status: 403,
+          error: "Os lagos originais da ilha não podem ser excluídos.",
+        };
+      }
+      removedName = "Lago";
+      removedX = target.x;
+      removedZ = target.z;
+      this.props.splice(idx, 1);
+    } else if (input.kind === "villager") {
+      const idx = this.villagers.findIndex((v) => v.id === cleanId);
+      if (idx < 0) {
+        return { ok: false, status: 404, error: "Morador não encontrado na ilha." };
+      }
+      const target = this.villagers[idx];
+      if (!target.id.startsWith("v-user-")) {
+        return {
+          ok: false,
+          status: 403,
+          error: "Os moradores originais da ilha não podem ser excluídos.",
+        };
+      }
+      removedName = target.name;
+      removedX = target.homeX;
+      removedZ = target.homeZ;
+      this.villagers.splice(idx, 1);
+    } else {
+      return { ok: false, status: 400, error: "Tipo de item inválido." };
+    }
+
+    this.version += 1;
+    this.schedulePersist();
+    const snap = this.getWorldSnapshot(input.cookieId, input.dayKey);
+    this.onBroadcast({
+      type: "world_updated",
+      note: `${removedName} excluído da ilha.`,
+      world: { ...this.readBaseWorld(), myCreationId: null },
+    });
+
+    return {
+      ok: true,
+      kind: input.kind,
+      id: cleanId,
+      name: removedName,
+      x: removedX,
+      z: removedZ,
+      world: snap,
+    };
+  }
+
+  public replaceCatalogItem(input: ReplaceCatalogItemInput): ReplaceCatalogItemResult {
+    const newPreset = getCatalogPreset(input.newPresetId);
+    if (!newPreset) {
+      return { ok: false, status: 404, error: "Novo item do catálogo não encontrado." };
+    }
+    const removed = this.removeCatalogItem({
+      kind: input.targetKind,
+      id: input.targetId,
+      extraPropId: input.extraPropId,
+      cookieId: input.cookieId,
+      dayKey: input.dayKey,
+    });
+    if (!removed.ok) {
+      return removed;
+    }
+    const placed = this.placeCatalogItem({
+      presetId: input.newPresetId,
+      cookieId: input.cookieId,
+      dayKey: input.dayKey,
+      x: removed.x,
+      z: removed.z,
+    });
+    if (!placed.ok) {
+      return placed;
+    }
+    return {
+      ...placed,
+      replacedId: removed.id,
+      replacedName: removed.name,
     };
   }
 

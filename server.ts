@@ -569,6 +569,130 @@ export async function startServer(customPort?: number) {
         );
       }
 
+      if (url.pathname === "/api/catalog-remove") {
+        if (request.method !== "POST") {
+          return jsonResponse(request, { ok: false, error: "Method not allowed." }, 405);
+        }
+        const csrfErr = verifyMutationSecurity(request);
+        if (csrfErr) {
+          return jsonResponse(request, { ok: false, error: csrfErr }, 403);
+        }
+        const id = await resolveVisitorIdentity(request, env);
+        const cookieHeaders = id.setCookieHeader ? { "Set-Cookie": id.setCookieHeader } : undefined;
+        if (!allowCatalogPlacement(id.ipHash)) {
+          return jsonResponse(
+            request,
+            { ok: false, error: "Muitas ações seguidas — aguarde alguns segundos." },
+            429,
+            cookieHeaders,
+          );
+        }
+        const parsedBody = await readBoundedJsonBody(request, 4_096);
+        if (!parsedBody.ok) {
+          return jsonResponse(request, { ok: false, error: parsedBody.error }, parsedBody.status, cookieHeaders);
+        }
+        const body = parsedBody.data;
+        const allowedKinds = new Set(["creation", "road", "villager", "pond"]);
+        const rawKind = sanitizePlainText(body.kind, 24, true);
+        const targetId = sanitizePlainText(body.id, 80, true);
+        const extraPropId = body.extraPropId ? sanitizePlainText(body.extraPropId, 80, true) : null;
+        if (!allowedKinds.has(rawKind) || !targetId) {
+          return jsonResponse(
+            request,
+            { ok: false, error: "Selecione um item válido para excluir." },
+            400,
+            cookieHeaders,
+          );
+        }
+        const result = worldStore.removeCatalogItem({
+          kind: rawKind as "creation" | "road" | "villager" | "pond",
+          id: targetId,
+          extraPropId,
+          cookieId: id.cookieId,
+          dayKey: id.dayKey,
+        });
+        if (!result.ok) {
+          return jsonResponse(
+            request,
+            { ok: false, error: result.error },
+            result.status,
+            cookieHeaders,
+          );
+        }
+        return jsonResponse(
+          request,
+          {
+            ...result,
+            visitorToken: id.visitorToken,
+          },
+          200,
+          cookieHeaders,
+        );
+      }
+
+      if (url.pathname === "/api/catalog-replace") {
+        if (request.method !== "POST") {
+          return jsonResponse(request, { ok: false, error: "Method not allowed." }, 405);
+        }
+        const csrfErr = verifyMutationSecurity(request);
+        if (csrfErr) {
+          return jsonResponse(request, { ok: false, error: csrfErr }, 403);
+        }
+        const id = await resolveVisitorIdentity(request, env);
+        const cookieHeaders = id.setCookieHeader ? { "Set-Cookie": id.setCookieHeader } : undefined;
+        if (!allowCatalogPlacement(id.ipHash)) {
+          return jsonResponse(
+            request,
+            { ok: false, error: "Muitas ações seguidas — aguarde alguns segundos." },
+            429,
+            cookieHeaders,
+          );
+        }
+        const parsedBody = await readBoundedJsonBody(request, 4_096);
+        if (!parsedBody.ok) {
+          return jsonResponse(request, { ok: false, error: parsedBody.error }, parsedBody.status, cookieHeaders);
+        }
+        const body = parsedBody.data;
+        const allowedKinds = new Set(["creation", "road", "villager", "pond"]);
+        const rawKind = sanitizePlainText(body.targetKind, 24, true);
+        const targetId = sanitizePlainText(body.targetId, 80, true);
+        const newPresetId = sanitizePlainText(body.newPresetId, 64, true);
+        const extraPropId = body.extraPropId ? sanitizePlainText(body.extraPropId, 80, true) : null;
+        if (!allowedKinds.has(rawKind) || !targetId || !newPresetId) {
+          return jsonResponse(
+            request,
+            { ok: false, error: "Selecione um item e um novo modelo para trocar." },
+            400,
+            cookieHeaders,
+          );
+        }
+        const result = worldStore.replaceCatalogItem({
+          targetKind: rawKind as "creation" | "road" | "villager" | "pond",
+          targetId,
+          extraPropId,
+          newPresetId,
+          cookieId: id.cookieId,
+          dayKey: id.dayKey,
+        });
+        if (!result.ok) {
+          return jsonResponse(
+            request,
+            { ok: false, error: result.error },
+            result.status,
+            cookieHeaders,
+          );
+        }
+        return jsonResponse(
+          request,
+          {
+            ...result,
+            visitorToken: id.visitorToken,
+          },
+          200,
+          cookieHeaders,
+        );
+      }
+
       return jsonResponse(request, { ok: false, error: "Not found." }, 404);
     } catch (err) {
       safeLogError("api_unhandled", err, [env.GEMINI_API_KEY, env.CREATOR_HMAC_SECRET]);

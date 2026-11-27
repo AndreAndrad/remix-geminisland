@@ -139,6 +139,38 @@
         <span>Menu</span>
       </button>
 
+      <button
+        type="button"
+        id="undo-btn"
+        class="cam-recenter-btn cam-action-btn"
+        aria-label="Retroceder última ação"
+        title="Retroceder (Ctrl+Z)"
+        disabled
+      >
+        <svg class="cam-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 14 4 9l5-5" />
+          <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+        </svg>
+        <span>Retroceder</span>
+      </button>
+
+      <button
+        type="button"
+        id="delete-mode-btn"
+        class="cam-recenter-btn cam-delete-btn"
+        aria-label="Excluir itens colocados"
+        aria-pressed="false"
+        title="Excluir itens no mapa"
+      >
+        <svg class="cam-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          <path d="M10 11v6M14 11v6" />
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+        </svg>
+        <span>Excluir</span>
+      </button>
+
       <div id="online-pill" class="online-pill" title="Players online" hidden>
         <span class="live-dot" aria-hidden="true"></span>
         <span id="online-count">1</span>
@@ -199,8 +231,28 @@
       <!-- 2b. Catalog spot-picking prompt pill -->
       <div id="catalog-pick-pill" class="dock-pill dock-pill-pick dock-pill-catalog" hidden>
         <span id="catalog-pick-label" class="catalog-pick-label">Clique no mapa para adicionar</span>
+        <button type="button" id="catalog-undo-btn" class="spot-chip-btn" hidden>Retroceder</button>
         <button type="button" id="catalog-switch-btn" class="spot-chip-btn">Trocar</button>
         <button type="button" id="catalog-cancel-btn" class="icon-close-btn" aria-label="Concluir posicionamento" title="Concluir">
+          &times;
+        </button>
+      </div>
+
+      <!-- 2c. Delete mode prompt pill -->
+      <div id="delete-mode-pill" class="dock-pill dock-pill-pick dock-pill-delete" hidden>
+        <span id="delete-mode-label" class="catalog-pick-label">Clique no item no mapa para excluir</span>
+        <button type="button" id="delete-undo-btn" class="spot-chip-btn" hidden>Retroceder</button>
+        <button type="button" id="delete-cancel-btn" class="icon-close-btn" aria-label="Sair do modo excluir" title="Concluir">
+          &times;
+        </button>
+      </div>
+
+      <!-- 2d. Selected placed-item action bar (Trocar / Excluir) -->
+      <div id="selected-item-pill" class="dock-pill dock-pill-pick dock-pill-selected" hidden>
+        <span id="selected-item-label" class="catalog-pick-label"></span>
+        <button type="button" id="selected-swap-btn" class="spot-chip-btn">Trocar</button>
+        <button type="button" id="selected-delete-btn" class="spot-chip-btn spot-chip-danger">Excluir</button>
+        <button type="button" id="selected-close-btn" class="icon-close-btn" aria-label="Fechar seleção" title="Fechar">
           &times;
         </button>
       </div>

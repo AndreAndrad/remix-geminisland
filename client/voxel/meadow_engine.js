@@ -4800,6 +4800,10 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
       plotMarker.group.visible = false;
       plotMarker.scaffoldGroup.visible = false;
       canvas.style.cursor = "grab";
+    } else if (mode === "deleting") {
+      plotMarker.group.visible = false;
+      plotMarker.scaffoldGroup.visible = false;
+      canvas.style.cursor = "crosshair";
     } else if (mode === "picking") {
       plotMarker.group.visible = true;
       plotMarker.scaffoldGroup.visible = false;
@@ -4888,7 +4892,9 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
 
   function idleCursor() {
     if (fp.active) return "crosshair";
-    if (spotState.mode === "picking" || spotState.mode === "staked") return "crosshair";
+    if (spotState.mode === "picking" || spotState.mode === "staked" || spotState.mode === "deleting") {
+      return "crosshair";
+    }
     return "grab";
   }
 
@@ -6419,6 +6425,17 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
     canvas.style.cursor = idleCursor();
 
     if (wasClick) {
+      if (spotState.mode === "deleting") {
+        const picked = pickCreationAt(e.clientX, e.clientY);
+        const g = screenToGround(e.clientX, e.clientY);
+        callbacks.onDeleteClick?.(
+          picked && picked.id !== "__city_sign__" ? picked.data : null,
+          g ? g[0] : null,
+          g ? g[1] : null,
+        );
+        return;
+      }
+
       if (spotState.mode === "picking" || spotState.mode === "staked") {
         const pickedExisting = spotState.mode === "staked" ? pickCreationAt(e.clientX, e.clientY) : null;
         if (!pickedExisting) {
@@ -6469,6 +6486,11 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
         }
         focusOn(picked.x, picked.z, targetZoom);
         callbacks.onSelectCreation?.(picked.data, liveFeedsById[picked.id] || null);
+      } else if (spotState.mode === "hidden") {
+        const g = screenToGround(e.clientX, e.clientY);
+        if (g) {
+          callbacks.onClickGroundEmpty?.(g[0], g[1]);
+        }
       }
     }
   };

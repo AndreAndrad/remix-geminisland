@@ -308,6 +308,19 @@ body {
     font-size: 0.78rem;
   }
 
+  .cam-action-btn,
+  .cam-delete-btn {
+    min-height: 36px;
+    width: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .cam-action-btn > span,
+  .cam-delete-btn > span {
+    display: none;
+  }
+
   .online-pill {
     min-height: 36px;
     padding: 5px 10px 5px 9px;
@@ -1673,9 +1686,50 @@ body[data-walk-mobile="1"] .walk-esc-hint {
   }
 }
 
+.cam-action-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.cam-delete-btn.is-danger-active {
+  background: #c93b3b;
+  color: #ffffff;
+  border-color: #b42f2f;
+  box-shadow: 0 6px 18px rgba(180, 47, 47, 0.28);
+}
+
+.cam-delete-btn.is-danger-active:hover {
+  background: #b53232;
+  color: #ffffff;
+}
+
+.dock-pill-delete {
+  border-color: rgba(201, 59, 59, 0.32);
+  box-shadow: 0 10px 28px rgba(160, 36, 36, 0.16);
+}
+
+.dock-pill-selected {
+  gap: 8px;
+}
+
+.spot-chip-danger {
+  background: rgba(201, 59, 59, 0.1);
+  color: #b52b2b;
+  border-color: rgba(201, 59, 59, 0.24);
+}
+
+.spot-chip-danger:hover {
+  background: #c93b3b;
+  color: #ffffff;
+  border-color: #b42f2f;
+}
+
 body[data-og-capture="1"] .cam-controls,
 body[data-og-capture="1"] #avatar-btn,
 body[data-og-capture="1"] #menu-btn,
+body[data-og-capture="1"] #undo-btn,
+body[data-og-capture="1"] #delete-mode-btn,
 body[data-og-capture="1"] #online-pill,
 body[data-og-capture="1"] #interact-prompt,
 body[data-og-capture="1"] #walk-esc-hint,

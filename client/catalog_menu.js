@@ -948,11 +948,15 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
   `;
 
   const closeBtn = dialogEl.querySelector(".cat-close-btn");
+  const titleEl = dialogEl.querySelector(".cat-title");
+  const subtitleEl = dialogEl.querySelector(".cat-subtitle");
+  const summaryEl = dialogEl.querySelector(".cat-selection-summary");
   const sidebarEl = dialogEl.querySelector(".cat-sidebar");
   const stageTitleEl = dialogEl.querySelector(".cat-stage-title");
   const stageDescEl = dialogEl.querySelector(".cat-stage-desc");
   const gridEl = dialogEl.querySelector(".cat-grid");
   const cancelBtn = dialogEl.querySelector('[data-cat-action="cancel"]');
+  let activeSwapLabel = null;
 
   function ensureCatalogLoaded() {
     return Promise.resolve(serverCatalogMap);
@@ -1457,12 +1461,12 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
   function pickAndPlace(cat, item) {
     if (!item) return;
     activePresetId = item.id;
-    close();
     onSelectPreset?.({
       ...item,
       categoryId: cat.id,
       categoryLabel: cat.label,
     });
+    close();
   }
 
   function renderSidebar() {
@@ -1511,7 +1515,7 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
 
       const actionHint = document.createElement("span");
       actionHint.className = "cat-card-cta";
-      actionHint.textContent = "+ Adicionar no mapa";
+      actionHint.textContent = activeSwapLabel ? "Trocar por este" : "+ Adicionar no mapa";
       stageWrap.appendChild(actionHint);
 
       const copy = document.createElement("div");
@@ -1558,7 +1562,24 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
     renderStage();
   }
 
-  function open(categoryId, presetId) {
+  function open(categoryId, presetId, options = {}) {
+    activeSwapLabel =
+      typeof options?.swapLabel === "string" && options.swapLabel.trim()
+        ? options.swapLabel.trim()
+        : null;
+    if (titleEl) {
+      titleEl.textContent = activeSwapLabel ? `Trocar: ${activeSwapLabel}` : "Menu de Construção";
+    }
+    if (subtitleEl) {
+      subtitleEl.textContent = activeSwapLabel
+        ? "Escolha abaixo o novo modelo para substituir este item no mesmo local"
+        : "Selecione a categoria e clique em qualquer desenho 3D para adicionar no mapa";
+    }
+    if (summaryEl) {
+      summaryEl.textContent = activeSwapLabel
+        ? "Clique em qualquer modelo para trocar instantaneamente no mapa"
+        : "Clique em um modelo para sair clicando e adicionando na ilha";
+    }
     if (categoryId && CATALOG_CATEGORIES.some((c) => c.id === categoryId)) {
       activeCatId = categoryId;
     }
@@ -1576,6 +1597,7 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
 
   function close() {
     hoveredPresetId = null;
+    activeSwapLabel = null;
     stopPreviewLoop();
     if (dialogEl.open) {
       dialogEl.close();

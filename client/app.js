@@ -16,8 +16,17 @@ const pickSpotPill = document.getElementById("pick-spot-pill");
 const cancelPickBtn = document.getElementById("cancel-pick-btn");
 const catalogPickPill = document.getElementById("catalog-pick-pill");
 const catalogPickLabel = document.getElementById("catalog-pick-label");
+const catalogUndoBtn = document.getElementById("catalog-undo-btn");
 const catalogSwitchBtn = document.getElementById("catalog-switch-btn");
 const catalogCancelBtn = document.getElementById("catalog-cancel-btn");
+const deleteModePill = document.getElementById("delete-mode-pill");
+const deleteUndoBtn = document.getElementById("delete-undo-btn");
+const deleteCancelBtn = document.getElementById("delete-cancel-btn");
+const selectedItemPill = document.getElementById("selected-item-pill");
+const selectedItemLabel = document.getElementById("selected-item-label");
+const selectedSwapBtn = document.getElementById("selected-swap-btn");
+const selectedDeleteBtn = document.getElementById("selected-delete-btn");
+const selectedCloseBtn = document.getElementById("selected-close-btn");
 
 const bottomBuilder = document.getElementById("bottom-builder");
 const moveSpotBtn = document.getElementById("move-spot-btn");
@@ -55,6 +64,8 @@ const recenterCompass = document.getElementById("recenter-compass");
 const avatarBtn = document.getElementById("avatar-btn");
 const avatarSwatchDot = document.getElementById("avatar-swatch-dot");
 const menuBtn = document.getElementById("menu-btn");
+const undoBtn = document.getElementById("undo-btn");
+const deleteModeBtn = document.getElementById("delete-mode-btn");
 const onlinePill = document.getElementById("online-pill");
 const onlineCountEl = document.getElementById("online-count");
 const interactPromptBtn = document.getElementById("interact-prompt");
@@ -71,7 +82,7 @@ const walkJoyDown = document.getElementById("walk-joy-down");
 const walkJoyLeft = document.getElementById("walk-joy-left");
 const walkJoyRight = document.getElementById("walk-joy-right");
 
-// UI states: "idle" | "picking" | "catalog_picking" | "composing" | "building" | "ready" | "placed"
+// UI states: "idle" | "picking" | "catalog_picking" | "catalog_deleting" | "composing" | "building" | "ready" | "placed"
 let uiState = "idle";
 let myCreationId = null;
 let readyCreation = null;
@@ -84,6 +95,13 @@ let pendingRoadStart = null;
 let catalogPlacingInFlight = false;
 let catalogPlacedCount = 0;
 const recentLocalCatalogIds = new Set();
+
+// Undo / Delete / Swap state
+const actionHistory = [];
+const placedPresetById = new Map();
+const placedExtraPropById = new Map();
+let selectedWorldItem = null;
+let pendingSwapTarget = null;
 
 // Live multi-user build queue state
 let activeJob = null;
@@ -334,6 +352,21 @@ engine = createMeadowWorldEngine(
     },
     onSelectCreation(creation, reading) {
       if (!creation || isOgCapture) return;
+      if (isRemovableCreation(creation)) {
+        selectedWorldItem = {
+          kind: "creation",
+          id: creation.id,
+          name: creation.name || "Item",
+          x: creation.x ?? 0,
+          z: creation.z ?? 0,
+          presetId: placedPresetById.get(creation.id) || null,
+          extraPropId: placedExtraPropById.get(creation.id) || null,
+        };
+        syncDockUI();
+      } else if (selectedWorldItem) {
+        selectedWorldItem = null;
+        syncDockUI();
+      }
       const baseDesc = creation.description || creation.behavior?.statusLine || "";
       const detail = reading?.summary
         ? baseDesc
@@ -341,6 +374,46 @@ engine = createMeadowWorldEngine(
           : reading.summary
         : baseDesc;
       showToast(detail ? `${creation.name} — ${detail}` : creation.name);
+    },
+    onClickGroundEmpty(rawX, rawZ) {
+      if (isOgCapture) return;
+      const nearby = findClosestRemovableAtGround(rawX, rawZ);
+      if (nearby) {
+        selectedWorldItem = nearby;
+        syncDockUI();
+        return;
+      }
+      if (selectedWorldItem) {
+        selectedWorldItem = null;
+        syncDockUI();
+      }
+    },
+    onDeleteClick(pickedCreation, rawX, rawZ) {
+      if (isOgCapture || catalogPlacingInFlight) return;
+      if (pickedCreation) {
+        if (!isRemovableCreation(pickedCreation)) {
+          showToast("Este marco original da ilha não pode ser excluído — clique em um item colocado.", 3200);
+          return;
+        }
+        void removeWorldItem({
+          kind: "creation",
+          id: pickedCreation.id,
+          name: pickedCreation.name || "Item",
+          x: pickedCreation.x ?? 0,
+          z: pickedCreation.z ?? 0,
+          presetId: placedPresetById.get(pickedCreation.id) || null,
+          extraPropId: placedExtraPropById.get(pickedCreation.id) || null,
+        });
+        return;
+      }
+      if (typeof rawX === "number" && typeof rawZ === "number") {
+        const nearby = findClosestRemovableAtGround(rawX, rawZ);
+        if (nearby) {
+          void removeWorldItem(nearby);
+          return;
+        }
+      }
+      showToast("Clique diretamente em um item colocado (casa, carro, estrada, rio, lago ou pessoa) para excluir.", 2800);
     },
     onInteractiveEvent(_creation, message) {
       if (!message || isOgCapture) return;
@@ -423,11 +496,18 @@ engine = createMeadowWorldEngine(
     onInteriorChange(roomInfo) {
       if (roomInfo) {
         document.body.dataset.inInterior = "1";
-        if (uiState === "picking" || uiState === "catalog_picking" || uiState === "composing") {
+        if (
+          uiState === "picking" ||
+          uiState === "catalog_picking" ||
+          uiState === "catalog_deleting" ||
+          uiState === "composing"
+        ) {
           hideError();
           chosenSpot = null;
           pendingCatalogPreset = null;
           pendingRoadStart = null;
+          pendingSwapTarget = null;
+          selectedWorldItem = null;
           catalogPlacedCount = 0;
           uiState = myCreationId ? "placed" : "idle";
           syncDockUI();
@@ -489,6 +569,119 @@ avatarBtn?.addEventListener("click", () => {
   characterBuilder?.open(engine?.getLocalAppearance?.());
 });
 
+function isRemovableCreation(creation) {
+  if (!creation || !creation.id) return false;
+  if (creation.isSeed || creation.isCompanion) return false;
+  return true;
+}
+
+function distToSegment2D(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const l2 = dx * dx + dz * dz;
+  const t = l2 > 1e-6 ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / l2)) : 0;
+  return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
+}
+
+function findClosestRemovableAtGround(gx, gz) {
+  if (!worldData || typeof gx !== "number" || typeof gz !== "number") return null;
+  let best = null;
+  let bestScore = Infinity;
+
+  for (const pr of worldData.props || []) {
+    if (pr.kind !== "pond" || !pr.id) continue;
+    if (!pr.id.startsWith("user-pond-") && !pr.id.startsWith("local-pond-")) continue;
+    const d = Math.hypot((pr.x || 0) - gx, (pr.z || 0) - gz);
+    const hitR = (pr.radius || 6.6) + 2.2;
+    if (d <= hitR && d * 0.65 < bestScore) {
+      bestScore = d * 0.65;
+      best = {
+        kind: "pond",
+        id: pr.id,
+        name: "Lago",
+        x: pr.x || 0,
+        z: pr.z || 0,
+        presetId: placedPresetById.get(pr.id) || null,
+      };
+    }
+  }
+
+  for (const p of worldData.paths || []) {
+    if (!p.id || !Array.isArray(p.points) || p.points.length < 2) continue;
+    if (!p.id.startsWith("user-") && !p.id.startsWith("local-")) continue;
+    let minD = Infinity;
+    for (let i = 0; i < p.points.length - 1; i++) {
+      const d = distToSegment2D(gx, gz, p.points[i][0], p.points[i][1], p.points[i + 1][0], p.points[i + 1][1]);
+      if (d < minD) minD = d;
+    }
+    const hitW = p.kind === "river" ? 3.8 : 3.2;
+    if (minD <= hitW && minD < bestScore) {
+      bestScore = minD;
+      const mid = p.points[Math.floor(p.points.length / 2)] || p.points[0];
+      best = {
+        kind: "road",
+        id: p.id,
+        name:
+          p.kind === "river"
+            ? "Rio Cristalino"
+            : p.kind === "creek"
+              ? "Riacho com Pedras"
+              : "Estrada",
+        x: mid[0],
+        z: mid[1],
+        presetId: placedPresetById.get(p.id) || null,
+      };
+    }
+  }
+
+  for (const v of worldData.villagers || []) {
+    if (!v.id) continue;
+    if (!v.id.startsWith("v-user-") && !v.id.startsWith("local-v-")) continue;
+    const d = Math.hypot((v.homeX || 0) - gx, (v.homeZ || 0) - gz);
+    if (d <= 4.5 && d < bestScore) {
+      bestScore = d;
+      best = {
+        kind: "villager",
+        id: v.id,
+        name: v.name || "Morador",
+        x: v.homeX || 0,
+        z: v.homeZ || 0,
+        presetId: placedPresetById.get(v.id) || null,
+      };
+    }
+  }
+
+  return best;
+}
+
+function pushActionHistory(entry) {
+  actionHistory.push(entry);
+  if (actionHistory.length > 60) {
+    actionHistory.shift();
+  }
+  syncActionControlsUI();
+}
+
+function syncActionControlsUI() {
+  const hasHistory = actionHistory.length > 0;
+  if (undoBtn) {
+    undoBtn.disabled = !hasHistory || catalogPlacingInFlight;
+  }
+  if (catalogUndoBtn) {
+    catalogUndoBtn.hidden = !hasHistory;
+    catalogUndoBtn.disabled = catalogPlacingInFlight;
+  }
+  if (deleteUndoBtn) {
+    deleteUndoBtn.hidden = !hasHistory;
+    deleteUndoBtn.disabled = catalogPlacingInFlight;
+  }
+  if (deleteModeBtn) {
+    const isDel = uiState === "catalog_deleting";
+    deleteModeBtn.classList.toggle("is-danger-active", isDel);
+    deleteModeBtn.setAttribute("aria-pressed", isDel ? "true" : "false");
+  }
+}
+
 function updateCatalogPickLabel() {
   if (!catalogPickLabel || !pendingCatalogPreset) return;
   if (catalogPlacingInFlight) {
@@ -506,9 +699,9 @@ function updateCatalogPickLabel() {
   catalogPickLabel.textContent = `${pendingCatalogPreset.name}${countSuffix} · Clique no mapa para adicionar`;
 }
 
-function placeCatalogPresetLocally(preset, x, z, x2, z2) {
+function placeCatalogPresetLocally(preset, x, z, x2, z2, options = {}) {
   const srv = catalogMenu?.getPresetData?.(preset.id);
-  if (!srv) return false;
+  if (!srv) return null;
 
   if (!worldData || typeof worldData !== "object") {
     worldData = {
@@ -534,12 +727,17 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
   let anchorX = px;
   let anchorZ = pz;
   let placedName = srv.name || preset.name;
+  let placedKind = "creation";
+  let placedId = "";
+  let extraPropId = null;
 
   if (srv.kind === "pond") {
+    placedKind = "pond";
+    placedId = `local-pond-${uid}`;
     worldData.props = [
       ...worldData.props,
       {
-        id: `local-pond-${uid}`,
+        id: placedId,
         kind: "pond",
         x: px,
         z: pz,
@@ -548,6 +746,7 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
       },
     ];
   } else if (srv.kind === "road" || preset.isRoad) {
+    placedKind = "road";
     const isWaterPath = srv.pathKind === "river" || srv.pathKind === "creek";
     const hasSecond =
       typeof x2 === "number" && Number.isFinite(x2) && typeof z2 === "number" && Number.isFinite(z2);
@@ -569,10 +768,11 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
     }
     const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
     const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
+    placedId = `local-${isWaterPath ? "water" : "road"}-${uid}`;
     worldData.paths = [
       ...worldData.paths,
       {
-        id: `local-${isWaterPath ? "water" : "road"}-${uid}`,
+        id: placedId,
         kind: srv.pathKind || "road",
         points: [
           [p0x, p0z],
@@ -585,6 +785,8 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
     anchorX = p1x;
     anchorZ = p1z;
   } else if (srv.kind === "villager" && srv.villagerSpec) {
+    placedKind = "villager";
+    placedId = `local-v-${uid}`;
     const names = ["Lucas", "Marina", "Gabriel", "Sofia", "Pedro", "Clara", "Mateus", "Beatriz"];
     const baseName = names[worldData.villagers.length % names.length];
     placedName = `${baseName} (${srv.name || preset.name})`;
@@ -598,7 +800,7 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
     worldData.villagers = [
       ...worldData.villagers,
       {
-        id: `local-v-${uid}`,
+        id: placedId,
         name: placedName,
         role: srv.villagerSpec.role,
         hatColor: srv.villagerSpec.hatColor,
@@ -613,6 +815,7 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
       },
     ];
   } else if (srv.blueprint) {
+    placedKind = "creation";
     const bp = srv.blueprint;
     let finalX = px;
     let finalZ = pz;
@@ -726,9 +929,10 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
           statusLine: bp.description || srv.description,
         };
       } else {
+        extraPropId = `local-pond-boat-${uid}`;
         worldData.props = [
           ...worldData.props,
-          { id: `local-pond-boat-${uid}`, kind: "pond", x: px, z: pz, yaw: 0, radius: 6.6 },
+          { id: extraPropId, kind: "pond", x: px, z: pz, yaw: 0, radius: 6.6 },
         ];
         const orbitR = 3.2;
         finalX = Number((px + orbitR).toFixed(2));
@@ -770,12 +974,12 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
         statusLine: bp.description || srv.description,
       };
     }
-    const creationId = `local-cat-${uid}`;
-    recentLocalCatalogIds.add(creationId);
+    placedId = `local-cat-${uid}`;
+    recentLocalCatalogIds.add(placedId);
     worldData.creations = [
       ...worldData.creations,
       {
-        id: creationId,
+        id: placedId,
         name: bp.name || srv.name,
         description: bp.description || srv.description,
         category: bp.category || "prop",
@@ -790,24 +994,83 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
       },
     ];
   } else {
-    return false;
+    return null;
   }
 
+  placedPresetById.set(placedId, preset.id);
+  if (extraPropId) {
+    placedExtraPropById.set(placedId, extraPropId);
+  }
   worldData.version = (worldData.version || 1) + 1;
   engine.applyWorldSnapshot(worldData);
-  catalogPlacedCount += 1;
-  if (preset.isRoad) {
-    pendingRoadStart = { x: anchorX, z: anchorZ };
+
+  if (!options.silent) {
+    const prevRoadStart = pendingRoadStart ? { ...pendingRoadStart } : null;
+    catalogPlacedCount += 1;
+    if (preset.isRoad) {
+      pendingRoadStart = { x: anchorX, z: anchorZ };
+    }
+    if (!options.skipHistory) {
+      pushActionHistory({
+        action: "place",
+        kind: placedKind,
+        id: placedId,
+        name: placedName,
+        x: px,
+        z: pz,
+        presetId: preset.id,
+        extraPropId,
+        prevRoadStart,
+      });
+    }
+    const verb = preset.isWater ? "criado" : preset.isRoad ? "adicionada" : "adicionado";
+    showToast(`${placedName} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
   }
-  const verb = preset.isWater ? "criado" : preset.isRoad ? "adicionada" : "adicionado";
-  showToast(`${placedName} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
+  return {
+    kind: placedKind,
+    id: placedId,
+    name: placedName,
+    x: anchorX,
+    z: anchorZ,
+    extraPropId,
+  };
+}
+
+function removeWorldItemLocally(target) {
+  if (!worldData || !target?.id) return false;
+  let removed = false;
+  if (target.kind === "creation") {
+    const before = (worldData.creations || []).length;
+    worldData.creations = (worldData.creations || []).filter((c) => c.id !== target.id);
+    removed = worldData.creations.length < before;
+    if (target.extraPropId) {
+      worldData.props = (worldData.props || []).filter((p) => p.id !== target.extraPropId);
+    }
+  } else if (target.kind === "road") {
+    const before = (worldData.paths || []).length;
+    worldData.paths = (worldData.paths || []).filter((p) => p.id !== target.id);
+    removed = worldData.paths.length < before;
+  } else if (target.kind === "pond") {
+    const before = (worldData.props || []).length;
+    worldData.props = (worldData.props || []).filter((p) => p.id !== target.id);
+    removed = worldData.props.length < before;
+  } else if (target.kind === "villager") {
+    const before = (worldData.villagers || []).length;
+    worldData.villagers = (worldData.villagers || []).filter((v) => v.id !== target.id);
+    removed = worldData.villagers.length < before;
+  }
+  if (!removed) return false;
+  worldData.version = (worldData.version || 1) + 1;
+  engine.applyWorldSnapshot(worldData);
   return true;
 }
 
-async function placeCatalogPresetAt(preset, x, z, x2, z2) {
-  if (!preset || catalogPlacingInFlight) return;
+async function placeCatalogPresetAt(preset, x, z, x2, z2, options = {}) {
+  if (!preset || catalogPlacingInFlight) return null;
   catalogPlacingInFlight = true;
   updateCatalogPickLabel();
+  syncActionControlsUI();
+  const prevRoadStart = pendingRoadStart ? { ...pendingRoadStart } : null;
   try {
     const res = await fetch("/api/catalog-place", {
       method: "POST",
@@ -827,24 +1090,37 @@ async function placeCatalogPresetAt(preset, x, z, x2, z2) {
       res.status === 404 || res.status === 405 || !contentType.includes("application/json");
 
     if (isStaticHostFallback) {
-      const placed = placeCatalogPresetLocally(preset, x, z, x2, z2);
-      if (!placed) {
+      const localRes = placeCatalogPresetLocally(preset, x, z, x2, z2, options);
+      if (!localRes && !options.silent) {
         showToast("Não foi possível adicionar agora — tente novamente.", 4000);
       }
       catalogPlacingInFlight = false;
       updateCatalogPickLabel();
-      return;
+      syncActionControlsUI();
+      return localRes;
     }
 
     const data = await res.json();
     if (data?.visitorToken) storeVisitorToken(data.visitorToken);
     if (!res.ok || !data.ok) {
-      showToast(data?.error || "Não foi possível adicionar agora — tente novamente.", 4000);
+      if (!options.silent) {
+        showToast(data?.error || "Não foi possível adicionar agora — tente novamente.", 4000);
+      }
       catalogPlacingInFlight = false;
       updateCatalogPickLabel();
-      return;
+      syncActionControlsUI();
+      return null;
     }
 
+    const placedId =
+      data.creation?.id || data.path?.id || data.villager?.id || data.prop?.id || "";
+    const placedKind = data.kind || preset.kind || "creation";
+    const extraPropId = data.extraPropId || null;
+
+    if (placedId) {
+      placedPresetById.set(placedId, preset.id);
+      if (extraPropId) placedExtraPropById.set(placedId, extraPropId);
+    }
     if (data.creation?.id) {
       recentLocalCatalogIds.add(data.creation.id);
       setTimeout(() => recentLocalCatalogIds.delete(data.creation.id), 15_000);
@@ -858,22 +1134,395 @@ async function placeCatalogPresetAt(preset, x, z, x2, z2) {
       engine.applyWorldSnapshot(worldData);
     }
 
-    // Keep continuous placement mode active so the user can keep clicking to add more!
-    catalogPlacedCount += 1;
-    if (preset.isRoad && typeof data.x === "number" && typeof data.z === "number") {
-      pendingRoadStart = { x: data.x, z: data.z };
+    if (!options.silent) {
+      catalogPlacedCount += 1;
+      if (preset.isRoad && typeof data.x === "number" && typeof data.z === "number") {
+        pendingRoadStart = { x: data.x, z: data.z };
+      }
+      if (!options.skipHistory && placedId) {
+        pushActionHistory({
+          action: "place",
+          kind: placedKind,
+          id: placedId,
+          name: data.name || preset.name,
+          x: typeof data.x === "number" ? data.x : x,
+          z: typeof data.z === "number" ? data.z : z,
+          presetId: preset.id,
+          extraPropId,
+          prevRoadStart,
+        });
+      }
+      const verb = preset.isWater ? "criado" : preset.isRoad ? "adicionada" : "adicionado";
+      showToast(`${data.name || preset.name} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
     }
+
     catalogPlacingInFlight = false;
     updateCatalogPickLabel();
-
-    const verb = preset.isWater ? "criado" : preset.isRoad ? "adicionada" : "adicionado";
-    showToast(`${data.name || preset.name} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
+    syncActionControlsUI();
+    return {
+      kind: placedKind,
+      id: placedId,
+      name: data.name || preset.name,
+      x: typeof data.x === "number" ? data.x : x,
+      z: typeof data.z === "number" ? data.z : z,
+      extraPropId,
+    };
   } catch {
-    if (!placeCatalogPresetLocally(preset, x, z, x2, z2)) {
+    const localRes = placeCatalogPresetLocally(preset, x, z, x2, z2, options);
+    if (!localRes && !options.silent) {
       showToast("Erro de conexão ao adicionar — tente novamente.", 4000);
     }
     catalogPlacingInFlight = false;
     updateCatalogPickLabel();
+    syncActionControlsUI();
+    return localRes;
+  }
+}
+
+async function removeWorldItem(target, options = {}) {
+  if (!target?.id || !target?.kind || catalogPlacingInFlight) return false;
+  catalogPlacingInFlight = true;
+  syncActionControlsUI();
+
+  const knownPresetId = target.presetId || placedPresetById.get(target.id) || null;
+  const knownExtraPropId = target.extraPropId || placedExtraPropById.get(target.id) || null;
+
+  const finalizeSuccess = (removedName, rx, rz) => {
+    if (selectedWorldItem?.id === target.id) {
+      selectedWorldItem = null;
+    }
+    if (!options.skipHistory) {
+      pushActionHistory({
+        action: "delete",
+        kind: target.kind,
+        id: target.id,
+        name: removedName || target.name || "Item",
+        x: typeof rx === "number" ? rx : target.x || 0,
+        z: typeof rz === "number" ? rz : target.z || 0,
+        presetId: knownPresetId,
+      });
+    }
+    if (!options.silent) {
+      showToast(`${removedName || target.name || "Item"} excluído da ilha!`, 2600);
+    }
+    catalogPlacingInFlight = false;
+    syncDockUI();
+    syncActionControlsUI();
+  };
+
+  try {
+    const isLocalOnly = target.id.startsWith("local-");
+    if (isLocalOnly) {
+      const okLocal = removeWorldItemLocally({ ...target, extraPropId: knownExtraPropId });
+      if (okLocal) {
+        finalizeSuccess(target.name, target.x, target.z);
+        return true;
+      }
+      catalogPlacingInFlight = false;
+      syncActionControlsUI();
+      return false;
+    }
+
+    const res = await fetch("/api/catalog-remove", {
+      method: "POST",
+      headers: buildVisitorHeaders({
+        "content-type": "application/json",
+        "x-meadow-client": "1",
+      }),
+      body: JSON.stringify({
+        kind: target.kind,
+        id: target.id,
+        ...(knownExtraPropId ? { extraPropId: knownExtraPropId } : {}),
+      }),
+    });
+    const contentType = res.headers.get("content-type") || "";
+    const isStaticHostFallback =
+      res.status === 404 || res.status === 405 || !contentType.includes("application/json");
+
+    if (isStaticHostFallback) {
+      const okLocal = removeWorldItemLocally({ ...target, extraPropId: knownExtraPropId });
+      if (okLocal) {
+        finalizeSuccess(target.name, target.x, target.z);
+        return true;
+      }
+      if (!options.silent) showToast("Não foi possível excluir este item.", 3000);
+      catalogPlacingInFlight = false;
+      syncActionControlsUI();
+      return false;
+    }
+
+    const data = await res.json();
+    if (data?.visitorToken) storeVisitorToken(data.visitorToken);
+    if (!res.ok || !data.ok) {
+      if (!options.silent) {
+        showToast(data?.error || "Não foi possível excluir este item.", 3400);
+      }
+      catalogPlacingInFlight = false;
+      syncActionControlsUI();
+      return false;
+    }
+
+    if (data.world) {
+      worldData = {
+        ...data.world,
+        myCreationId: data.world.myCreationId || myCreationId,
+      };
+      engine.applyWorldSnapshot(worldData);
+    }
+    finalizeSuccess(data.name, data.x, data.z);
+    return true;
+  } catch {
+    const okLocal = removeWorldItemLocally({ ...target, extraPropId: knownExtraPropId });
+    if (okLocal) {
+      finalizeSuccess(target.name, target.x, target.z);
+      return true;
+    }
+    if (!options.silent) {
+      showToast("Erro ao excluir item — tente novamente.", 3400);
+    }
+    catalogPlacingInFlight = false;
+    syncActionControlsUI();
+    return false;
+  }
+}
+
+async function replaceWorldItem(target, newPreset) {
+  if (!target?.id || !newPreset?.id || catalogPlacingInFlight) return false;
+  catalogPlacingInFlight = true;
+  syncActionControlsUI();
+
+  const oldPresetId = target.presetId || placedPresetById.get(target.id) || null;
+  const oldExtraPropId = target.extraPropId || placedExtraPropById.get(target.id) || null;
+
+  const finalizeSwap = (newKind, newId, newName, newX, newZ, newExtraPropId) => {
+    if (newId) {
+      placedPresetById.set(newId, newPreset.id);
+      if (newExtraPropId) placedExtraPropById.set(newId, newExtraPropId);
+    }
+    selectedWorldItem = newId
+      ? {
+          kind: newKind,
+          id: newId,
+          name: newName,
+          x: newX,
+          z: newZ,
+          presetId: newPreset.id,
+          extraPropId: newExtraPropId || null,
+        }
+      : null;
+    pushActionHistory({
+      action: "swap",
+      newKind,
+      newId,
+      newName,
+      newExtraPropId: newExtraPropId || null,
+      oldName: target.name,
+      oldPresetId,
+      x: target.x,
+      z: target.z,
+    });
+    showToast(`${target.name} trocado por ${newName}!`, 3000);
+    catalogPlacingInFlight = false;
+    syncDockUI();
+    syncActionControlsUI();
+  };
+
+  try {
+    if (target.id.startsWith("local-")) {
+      removeWorldItemLocally({ ...target, extraPropId: oldExtraPropId });
+      const placed = placeCatalogPresetLocally(newPreset, target.x, target.z, null, null, {
+        silent: true,
+        skipHistory: true,
+      });
+      if (placed) {
+        finalizeSwap(placed.kind, placed.id, placed.name, placed.x, placed.z, placed.extraPropId);
+        return true;
+      }
+      catalogPlacingInFlight = false;
+      syncActionControlsUI();
+      return false;
+    }
+
+    const res = await fetch("/api/catalog-replace", {
+      method: "POST",
+      headers: buildVisitorHeaders({
+        "content-type": "application/json",
+        "x-meadow-client": "1",
+      }),
+      body: JSON.stringify({
+        targetKind: target.kind,
+        targetId: target.id,
+        newPresetId: newPreset.id,
+        ...(oldExtraPropId ? { extraPropId: oldExtraPropId } : {}),
+      }),
+    });
+    const contentType = res.headers.get("content-type") || "";
+    const isStaticHostFallback =
+      res.status === 404 || res.status === 405 || !contentType.includes("application/json");
+
+    if (isStaticHostFallback) {
+      removeWorldItemLocally({ ...target, extraPropId: oldExtraPropId });
+      const placed = placeCatalogPresetLocally(newPreset, target.x, target.z, null, null, {
+        silent: true,
+        skipHistory: true,
+      });
+      if (placed) {
+        finalizeSwap(placed.kind, placed.id, placed.name, placed.x, placed.z, placed.extraPropId);
+        return true;
+      }
+      showToast("Não foi possível trocar este item.", 3200);
+      catalogPlacingInFlight = false;
+      syncActionControlsUI();
+      return false;
+    }
+
+    const data = await res.json();
+    if (data?.visitorToken) storeVisitorToken(data.visitorToken);
+    if (!res.ok || !data.ok) {
+      showToast(data?.error || "Não foi possível trocar este item.", 3400);
+      catalogPlacingInFlight = false;
+      syncActionControlsUI();
+      return false;
+    }
+
+    const newId = data.creation?.id || data.path?.id || data.villager?.id || data.prop?.id || "";
+    if (data.creation?.id) {
+      recentLocalCatalogIds.add(data.creation.id);
+      setTimeout(() => recentLocalCatalogIds.delete(data.creation.id), 15_000);
+    }
+    if (data.world) {
+      worldData = {
+        ...data.world,
+        myCreationId: data.world.myCreationId || myCreationId,
+      };
+      engine.applyWorldSnapshot(worldData);
+    }
+    finalizeSwap(
+      data.kind || newPreset.kind || "creation",
+      newId,
+      data.name || newPreset.name,
+      typeof data.x === "number" ? data.x : target.x,
+      typeof data.z === "number" ? data.z : target.z,
+      data.extraPropId || null,
+    );
+    return true;
+  } catch {
+    removeWorldItemLocally({ ...target, extraPropId: oldExtraPropId });
+    const placed = placeCatalogPresetLocally(newPreset, target.x, target.z, null, null, {
+      silent: true,
+      skipHistory: true,
+    });
+    if (placed) {
+      finalizeSwap(placed.kind, placed.id, placed.name, placed.x, placed.z, placed.extraPropId);
+      return true;
+    }
+    showToast("Erro ao trocar item — tente novamente.", 3400);
+    catalogPlacingInFlight = false;
+    syncActionControlsUI();
+    return false;
+  }
+}
+
+async function undoLastAction() {
+  if (catalogPlacingInFlight || actionHistory.length === 0) return;
+  const entry = actionHistory.pop();
+  syncActionControlsUI();
+
+  if (entry.action === "place") {
+    const ok = await removeWorldItem(
+      {
+        kind: entry.kind,
+        id: entry.id,
+        name: entry.name,
+        x: entry.x,
+        z: entry.z,
+        extraPropId: entry.extraPropId,
+      },
+      { skipHistory: true, silent: true },
+    );
+    if (ok) {
+      if (entry.kind === "road") {
+        pendingRoadStart = entry.prevRoadStart || null;
+      }
+      catalogPlacedCount = Math.max(0, catalogPlacedCount - 1);
+      updateCatalogPickLabel();
+      showToast(`Desfeito: ${entry.name} removido.`, 2400);
+    } else {
+      showToast("Não foi possível retroceder esta ação.", 2800);
+    }
+    syncActionControlsUI();
+    return;
+  }
+
+  if (entry.action === "delete") {
+    if (!entry.presetId) {
+      showToast("Este item antigo não pode ser restaurado automaticamente.", 3000);
+      syncActionControlsUI();
+      return;
+    }
+    const srv = catalogMenu?.getPresetData?.(entry.presetId);
+    if (!srv) {
+      syncActionControlsUI();
+      return;
+    }
+    const restored = await placeCatalogPresetAt(
+      {
+        id: entry.presetId,
+        name: srv.name || entry.name,
+        kind: srv.kind,
+        isRoad: srv.kind === "road",
+        isWater: srv.kind === "pond" || srv.pathKind === "river" || srv.pathKind === "creek",
+      },
+      entry.x,
+      entry.z,
+      null,
+      null,
+      { skipHistory: true, silent: true },
+    );
+    if (restored) {
+      showToast(`Restaurado: ${entry.name} de volta ao mapa.`, 2400);
+    }
+    syncActionControlsUI();
+    return;
+  }
+
+  if (entry.action === "swap") {
+    if (entry.newId) {
+      await removeWorldItem(
+        {
+          kind: entry.newKind,
+          id: entry.newId,
+          name: entry.newName,
+          x: entry.x,
+          z: entry.z,
+          extraPropId: entry.newExtraPropId,
+        },
+        { skipHistory: true, silent: true },
+      );
+    }
+    if (entry.oldPresetId) {
+      const srv = catalogMenu?.getPresetData?.(entry.oldPresetId);
+      if (srv) {
+        await placeCatalogPresetAt(
+          {
+            id: entry.oldPresetId,
+            name: srv.name || entry.oldName,
+            kind: srv.kind,
+            isRoad: srv.kind === "road",
+            isWater: srv.kind === "pond" || srv.pathKind === "river" || srv.pathKind === "creek",
+          },
+          entry.x,
+          entry.z,
+          null,
+          null,
+          { skipHistory: true, silent: true },
+        );
+      }
+      showToast(`Troca desfeita: ${entry.oldName} restaurado.`, 2400);
+    } else {
+      showToast(`Troca desfeita: ${entry.newName} removido.`, 2400);
+    }
+    syncActionControlsUI();
   }
 }
 
@@ -882,9 +1531,16 @@ catalogMenu = createCatalogMenuController({
   onSelectPreset(preset) {
     if (!preset) return;
     hoverCard.hidden = true;
+    if (pendingSwapTarget) {
+      const targetToSwap = pendingSwapTarget;
+      pendingSwapTarget = null;
+      void replaceWorldItem(targetToSwap, preset);
+      return;
+    }
     if (engine.isFirstPerson()) {
       engine.setDragMode("pan");
     }
+    selectedWorldItem = null;
     pendingCatalogPreset = preset;
     pendingRoadStart = null;
     catalogPlacedCount = 0;
@@ -897,6 +1553,7 @@ catalogMenu = createCatalogMenuController({
 
 catalogDialog?.addEventListener("close", () => {
   lastCatalogDialogCloseMs = performance.now();
+  pendingSwapTarget = null;
   menuBtn?.blur();
   queueMicrotask(() => menuBtn?.blur());
 });
@@ -905,12 +1562,73 @@ menuBtn?.addEventListener("click", () => {
   if (isOgCapture) return;
   menuBtn?.blur();
   hoverCard.hidden = true;
+  pendingSwapTarget = null;
   resetWalkJoystick();
   engine?.releaseWalkPointerLock?.();
   catalogMenu?.open(pendingCatalogPreset?.categoryId, pendingCatalogPreset?.id);
 });
 
+undoBtn?.addEventListener("click", () => {
+  if (isOgCapture) return;
+  undoBtn?.blur();
+  void undoLastAction();
+});
+
+catalogUndoBtn?.addEventListener("click", () => {
+  void undoLastAction();
+});
+
+deleteUndoBtn?.addEventListener("click", () => {
+  void undoLastAction();
+});
+
+deleteModeBtn?.addEventListener("click", () => {
+  if (isOgCapture) return;
+  deleteModeBtn?.blur();
+  hoverCard.hidden = true;
+  selectedWorldItem = null;
+  pendingSwapTarget = null;
+  if (uiState === "catalog_deleting") {
+    uiState = myCreationId ? "placed" : "idle";
+    syncDockUI();
+    return;
+  }
+  if (engine.isFirstPerson()) {
+    engine.setDragMode("pan");
+  }
+  pendingCatalogPreset = null;
+  pendingRoadStart = null;
+  uiState = "catalog_deleting";
+  syncDockUI();
+});
+
+deleteCancelBtn?.addEventListener("click", () => {
+  uiState = myCreationId ? "placed" : "idle";
+  syncDockUI();
+});
+
+selectedSwapBtn?.addEventListener("click", () => {
+  if (!selectedWorldItem) return;
+  pendingSwapTarget = { ...selectedWorldItem };
+  const prevPresetId = selectedWorldItem.presetId || placedPresetById.get(selectedWorldItem.id) || null;
+  catalogMenu?.open(undefined, prevPresetId || undefined, {
+    swapLabel: selectedWorldItem.name,
+  });
+});
+
+selectedDeleteBtn?.addEventListener("click", () => {
+  if (!selectedWorldItem) return;
+  const toDelete = { ...selectedWorldItem };
+  void removeWorldItem(toDelete);
+});
+
+selectedCloseBtn?.addEventListener("click", () => {
+  selectedWorldItem = null;
+  syncDockUI();
+});
+
 catalogSwitchBtn?.addEventListener("click", () => {
+  pendingSwapTarget = null;
   catalogMenu?.open(pendingCatalogPreset?.categoryId, pendingCatalogPreset?.id);
 });
 
@@ -946,11 +1664,19 @@ camWalkBtn?.addEventListener("click", () => {
     engine.setDragMode("pan");
     return;
   }
-  if (uiState === "picking" || uiState === "catalog_picking" || uiState === "composing") {
+  if (
+    uiState === "picking" ||
+    uiState === "catalog_picking" ||
+    uiState === "catalog_deleting" ||
+    uiState === "composing" ||
+    selectedWorldItem
+  ) {
     hideError();
     chosenSpot = null;
     pendingCatalogPreset = null;
     pendingRoadStart = null;
+    pendingSwapTarget = null;
+    selectedWorldItem = null;
     catalogPlacedCount = 0;
     uiState = myCreationId ? "placed" : "idle";
     syncDockUI();
@@ -1066,12 +1792,19 @@ function syncDockUI() {
   addBtn.hidden = true;
   pickSpotPill.hidden = true;
   if (catalogPickPill) catalogPickPill.hidden = true;
+  if (deleteModePill) deleteModePill.hidden = true;
+  if (selectedItemPill) selectedItemPill.hidden = true;
   bottomBuilder.hidden = true;
   buildingPill.hidden = true;
   readyGotoBtn.hidden = true;
   locateMineBtn.hidden = true;
 
-  if (myCreationId && uiState !== "ready" && uiState !== "catalog_picking") {
+  if (
+    myCreationId &&
+    uiState !== "ready" &&
+    uiState !== "catalog_picking" &&
+    uiState !== "catalog_deleting"
+  ) {
     uiState = "placed";
   }
 
@@ -1087,6 +1820,10 @@ function syncDockUI() {
       if (catalogPickPill) catalogPickPill.hidden = false;
       updateCatalogPickLabel();
       engine.setSpotPickerState({ mode: "picking" });
+      break;
+    case "catalog_deleting":
+      if (deleteModePill) deleteModePill.hidden = false;
+      engine.setSpotPickerState({ mode: "deleting" });
       break;
     case "composing":
       bottomBuilder.hidden = false;
@@ -1114,17 +1851,28 @@ function syncDockUI() {
       break;
     }
     case "placed": {
-      locateMineBtn.hidden = false;
-      const mine = worldData?.creations?.find((c) => c.id === myCreationId);
-      locateMineLabel.textContent = mine ? `Locate · ${mine.name}` : "Locate yours";
+      if (selectedWorldItem && selectedItemPill && selectedItemLabel) {
+        selectedItemLabel.textContent = selectedWorldItem.name;
+        selectedItemPill.hidden = false;
+      } else {
+        locateMineBtn.hidden = false;
+        const mine = worldData?.creations?.find((c) => c.id === myCreationId);
+        locateMineLabel.textContent = mine ? `Locate · ${mine.name}` : "Locate yours";
+      }
       engine.setSpotPickerState({ mode: "hidden" });
       break;
     }
     default:
-      addBtn.hidden = false;
+      if (selectedWorldItem && selectedItemPill && selectedItemLabel) {
+        selectedItemLabel.textContent = selectedWorldItem.name;
+        selectedItemPill.hidden = false;
+      } else {
+        addBtn.hidden = false;
+      }
       engine.setSpotPickerState({ mode: "hidden" });
       break;
   }
+  syncActionControlsUI();
 }
 
 async function pollActiveJob() {
@@ -1235,6 +1983,16 @@ closeBuilderBtn.addEventListener("click", () => {
 });
 
 window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+    const tag = e.target instanceof HTMLElement ? e.target.tagName : "";
+    if (tag !== "INPUT" && tag !== "TEXTAREA" && !catalogDialog?.open && !avatarDialog?.open) {
+      if (actionHistory.length > 0) {
+        e.preventDefault();
+        void undoLastAction();
+      }
+      return;
+    }
+  }
   if (e.key === "Escape") {
     if (
       characterBuilder?.isOpen?.() ||
@@ -1248,12 +2006,20 @@ window.addEventListener("keydown", (e) => {
     ) {
       return;
     }
-    if (uiState === "picking" || uiState === "catalog_picking" || uiState === "composing") {
+    if (
+      uiState === "picking" ||
+      uiState === "catalog_picking" ||
+      uiState === "catalog_deleting" ||
+      uiState === "composing" ||
+      selectedWorldItem
+    ) {
       e.preventDefault();
       hideError();
       chosenSpot = null;
       pendingCatalogPreset = null;
       pendingRoadStart = null;
+      pendingSwapTarget = null;
+      selectedWorldItem = null;
       catalogPlacedCount = 0;
       catalogPlacingInFlight = false;
       uiState = myCreationId ? "placed" : "idle";
