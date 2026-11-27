@@ -533,6 +533,11 @@ export async function startServer(customPort?: number) {
         const z = typeof body.z === "number" && Number.isFinite(body.z) ? body.z : null;
         const x2 = typeof body.x2 === "number" && Number.isFinite(body.x2) ? body.x2 : null;
         const z2 = typeof body.z2 === "number" && Number.isFinite(body.z2) ? body.z2 : null;
+        const rawCurve = sanitizePlainText(body.curveMode, 16, true);
+        const curveMode =
+          rawCurve === "left" || rawCurve === "right" || rawCurve === "scurve"
+            ? rawCurve
+            : "straight";
         if (!presetId || x === null || z === null) {
           return jsonResponse(
             request,
@@ -549,6 +554,7 @@ export async function startServer(customPort?: number) {
           z,
           x2,
           z2,
+          curveMode,
         });
         if (!result.ok) {
           return jsonResponse(

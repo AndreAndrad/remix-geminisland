@@ -231,6 +231,13 @@
       <!-- 2b. Catalog spot-picking prompt pill -->
       <div id="catalog-pick-pill" class="dock-pill dock-pill-pick dock-pill-catalog" hidden>
         <span id="catalog-pick-label" class="catalog-pick-label">Clique no mapa para adicionar</span>
+        <div id="road-curve-controls" class="road-curve-group" role="group" aria-label="Formato da estrada" hidden>
+          <button type="button" class="road-curve-btn is-active" data-road-curve="straight" aria-pressed="true" title="Trecho reto">Reta</button>
+          <button type="button" class="road-curve-btn" data-road-curve="left" aria-pressed="false" title="Fazer curva para a esquerda">Curva ↰</button>
+          <button type="button" class="road-curve-btn" data-road-curve="right" aria-pressed="false" title="Fazer curva para a direita">Curva ↱</button>
+          <button type="button" class="road-curve-btn" data-road-curve="scurve" aria-pressed="false" title="Fazer curva em S">Curva S</button>
+          <button type="button" id="road-new-branch-btn" class="road-curve-btn road-branch-btn" hidden title="Começar um novo trecho em outro lugar">Novo trecho</button>
+        </div>
         <button type="button" id="catalog-undo-btn" class="spot-chip-btn" hidden>Retroceder</button>
         <button type="button" id="catalog-switch-btn" class="spot-chip-btn">Trocar</button>
         <button type="button" id="catalog-cancel-btn" class="icon-close-btn" aria-label="Concluir posicionamento" title="Concluir">

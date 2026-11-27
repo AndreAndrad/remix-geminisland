@@ -92,9 +92,14 @@ let chosenSpot = null;
 let toastTimer = null;
 let pendingCatalogPreset = null;
 let pendingRoadStart = null;
+let roadCurveMode = "straight";
 let catalogPlacingInFlight = false;
 let catalogPlacedCount = 0;
 const recentLocalCatalogIds = new Set();
+
+const roadCurveControls = document.getElementById("road-curve-controls");
+const roadCurveBtns = Array.from(document.querySelectorAll("[data-road-curve]"));
+const roadNewBranchBtn = document.getElementById("road-new-branch-btn");
 
 // Undo / Delete / Swap state
 const actionHistory = [];
@@ -443,8 +448,10 @@ engine = createMeadowWorldEngine(
           }
           return;
         }
-        const px = pendingCatalogPreset.useRawSpot ? rx : x;
-        const pz = pendingCatalogPreset.useRawSpot ? rz : z;
+        const useRaw =
+          Boolean(pendingCatalogPreset.useRawSpot) || isPresetRoadVehicle(pendingCatalogPreset);
+        const px = useRaw ? rx : x;
+        const pz = useRaw ? rz : z;
         void placeCatalogPresetAt(pendingCatalogPreset, px, pz, null, null);
         return;
       }
@@ -682,6 +689,34 @@ function syncActionControlsUI() {
   }
 }
 
+function isPresetRoadVehicle(preset) {
+  if (!preset) return false;
+  if (typeof preset.isVehicle === "boolean") return preset.isVehicle;
+  const srv = catalogMenu?.getPresetData?.(preset.id);
+  return srv?.behaviorHint === "vehicle_route";
+}
+
+function getPresetPathKind(preset) {
+  if (!preset) return "road";
+  const srv = catalogMenu?.getPresetData?.(preset.id);
+  return srv?.pathKind || (preset.isWater ? "river" : "road");
+}
+
+function syncRoadCurveControlsUI() {
+  const showCurves = uiState === "catalog_picking" && Boolean(pendingCatalogPreset?.isRoad);
+  if (roadCurveControls) {
+    roadCurveControls.hidden = !showCurves;
+  }
+  for (const btn of roadCurveBtns) {
+    const active = btn.dataset.roadCurve === roadCurveMode;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+  if (roadNewBranchBtn) {
+    roadNewBranchBtn.hidden = !showCurves || !pendingRoadStart;
+  }
+}
+
 function updateCatalogPickLabel() {
   if (!catalogPickLabel || !pendingCatalogPreset) return;
   if (catalogPlacingInFlight) {
@@ -690,13 +725,28 @@ function updateCatalogPickLabel() {
   }
   const countSuffix = catalogPlacedCount > 0 ? ` (${catalogPlacedCount})` : "";
   if (pendingCatalogPreset.isRoad) {
+    const curveTag =
+      roadCurveMode === "left"
+        ? "Curva ↰"
+        : roadCurveMode === "right"
+          ? "Curva ↱"
+          : roadCurveMode === "scurve"
+            ? "Curva S"
+            : "Reta";
     const segLabel = pendingCatalogPreset.isWater ? "continuar o rio" : "continuar a pista";
     catalogPickLabel.textContent = pendingRoadStart
-      ? `${pendingCatalogPreset.name}${countSuffix} · Clique para ${segLabel}`
-      : `${pendingCatalogPreset.name} · Clique no mapa para adicionar`;
+      ? `${pendingCatalogPreset.name}${countSuffix} · ${curveTag} · Clique para ${segLabel}`
+      : `${pendingCatalogPreset.name} · ${curveTag} · Clique no mapa`;
+    syncRoadCurveControlsUI();
+    return;
+  }
+  if (isPresetRoadVehicle(pendingCatalogPreset)) {
+    catalogPickLabel.textContent = `${pendingCatalogPreset.name}${countSuffix} · Clique sobre uma estrada (asfalto, pedra ou terra)`;
+    syncRoadCurveControlsUI();
     return;
   }
   catalogPickLabel.textContent = `${pendingCatalogPreset.name}${countSuffix} · Clique no mapa para adicionar`;
+  syncRoadCurveControlsUI();
 }
 
 function placeCatalogPresetLocally(preset, x, z, x2, z2, options = {}) {
@@ -748,42 +798,138 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2, options = {}) {
   } else if (srv.kind === "road" || preset.isRoad) {
     placedKind = "road";
     const isWaterPath = srv.pathKind === "river" || srv.pathKind === "creek";
+    const cMode =
+      options.curveMode === "left" || options.curveMode === "right" || options.curveMode === "scurve"
+        ? options.curveMode
+        : roadCurveMode;
+    const drivableKinds = new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]);
     const hasSecond =
       typeof x2 === "number" && Number.isFinite(x2) && typeof z2 === "number" && Number.isFinite(z2);
-    let p0x = px;
-    let p0z = pz;
-    let p1x = px;
-    let p1z = pz;
+    let points = [];
+
     if (hasSecond) {
-      p1x = Number(clampCoord(x2).toFixed(2));
-      p1z = Number(clampCoord(z2).toFixed(2));
+      const p0x = px;
+      const p0z = pz;
+      let p1x = Number(clampCoord(x2).toFixed(2));
+      let p1z = Number(clampCoord(z2).toFixed(2));
       if (Math.hypot(p1x - p0x, p1z - p0z) < 4) {
         p1x = Number(clampCoord(p0x + 12).toFixed(2));
         p1z = Number(clampCoord(p0z + 3).toFixed(2));
       }
-    } else {
-      const halfLen = isWaterPath ? 9.5 : 7;
-      p0x = Number(clampCoord(px - halfLen).toFixed(2));
-      p1x = Number(clampCoord(px + halfLen).toFixed(2));
-    }
-    const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
-    const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
-    placedId = `local-${isWaterPath ? "water" : "road"}-${uid}`;
-    worldData.paths = [
-      ...worldData.paths,
-      {
-        id: placedId,
-        kind: srv.pathKind || "road",
-        points: [
+      const dx = p1x - p0x;
+      const dz = p1z - p0z;
+      const dist = Math.max(4, Math.hypot(dx, dz));
+      const nx = dz / dist;
+      const nz = -dx / dist;
+
+      if (cMode === "left" || cMode === "right") {
+        const sign = cMode === "left" ? 1 : -1;
+        const bow = Math.min(18, Math.max(3.5, dist * 0.38)) * sign;
+        const cpx = (p0x + p1x) * 0.5 + nx * bow;
+        const cpz = (p0z + p1z) * 0.5 + nz * bow;
+        for (let i = 0; i <= 4; i++) {
+          const t = i / 4;
+          const omt = 1 - t;
+          points.push([
+            Number(clampCoord(omt * omt * p0x + 2 * omt * t * cpx + t * t * p1x).toFixed(2)),
+            Number(clampCoord(omt * omt * p0z + 2 * omt * t * cpz + t * t * p1z).toFixed(2)),
+          ]);
+        }
+      } else if (cMode === "scurve") {
+        const bow = Math.min(14, Math.max(3.2, dist * 0.32));
+        const cp1x = p0x + dx * 0.33 + nx * bow;
+        const cp1z = p0z + dz * 0.33 + nz * bow;
+        const cp2x = p0x + dx * 0.67 - nx * bow;
+        const cp2z = p0z + dz * 0.67 - nz * bow;
+        for (let i = 0; i <= 5; i++) {
+          const t = i / 5;
+          const omt = 1 - t;
+          points.push([
+            Number(clampCoord(omt * omt * omt * p0x + 3 * omt * omt * t * cp1x + 3 * omt * t * t * cp2x + t * t * t * p1x).toFixed(2)),
+            Number(clampCoord(omt * omt * omt * p0z + 3 * omt * omt * t * cp1z + 3 * omt * t * t * cp2z + t * t * t * p1z).toFixed(2)),
+          ]);
+        }
+      } else {
+        points = [
           [p0x, p0z],
-          [midX, midZ],
+          [Number(((p0x + p1x) * 0.5).toFixed(2)), Number(((p0z + p1z) * 0.5).toFixed(2))],
           [p1x, p1z],
-        ],
-        closed: false,
-      },
-    ];
-    anchorX = p1x;
-    anchorZ = p1z;
+        ];
+      }
+    } else {
+      let snappedStart = null;
+      if (!isWaterPath) {
+        let bestEndD = 4.6;
+        for (const existing of worldData.paths) {
+          if (existing.closed || !drivableKinds.has(existing.kind) || !Array.isArray(existing.points) || existing.points.length < 2) {
+            continue;
+          }
+          for (const end of [existing.points[0], existing.points[existing.points.length - 1]]) {
+            const d = Math.hypot(end[0] - px, end[1] - pz);
+            if (d < bestEndD) {
+              bestEndD = d;
+              snappedStart = [end[0], end[1]];
+            }
+          }
+        }
+      }
+      const halfLen = isWaterPath ? 9.5 : 8.0;
+      if (cMode === "left" || cMode === "right") {
+        const sign = cMode === "left" ? 1 : -1;
+        const radius = isWaterPath ? 10.5 : 9.5;
+        const startX = snappedStart ? snappedStart[0] : px - halfLen * 0.7;
+        const startZ = snappedStart ? snappedStart[1] : pz + sign * (halfLen * 0.35);
+        const cx = startX;
+        const cz = startZ - sign * radius;
+        for (let i = 0; i <= 4; i++) {
+          const ang = (i / 4) * (Math.PI * 0.5);
+          points.push([
+            Number(clampCoord(cx + Math.sin(ang) * radius).toFixed(2)),
+            Number(clampCoord(cz + sign * Math.cos(ang) * radius).toFixed(2)),
+          ]);
+        }
+      } else if (cMode === "scurve") {
+        const sx = snappedStart ? snappedStart[0] : px - halfLen;
+        const sz = snappedStart ? snappedStart[1] : pz;
+        const ex = sx + halfLen * 2;
+        const ez = sz;
+        const bow = 5.4;
+        const cp1x = sx + halfLen * 0.65;
+        const cp1z = sz - bow;
+        const cp2x = sx + halfLen * 1.35;
+        const cp2z = sz + bow;
+        for (let i = 0; i <= 5; i++) {
+          const t = i / 5;
+          const omt = 1 - t;
+          points.push([
+            Number(clampCoord(omt * omt * omt * sx + 3 * omt * omt * t * cp1x + 3 * omt * t * t * cp2x + t * t * t * ex).toFixed(2)),
+            Number(clampCoord(omt * omt * omt * sz + 3 * omt * omt * t * cp1z + 3 * omt * t * t * cp2z + t * t * t * ez).toFixed(2)),
+          ]);
+        }
+      } else {
+        const p0x = snappedStart ? snappedStart[0] : Number(clampCoord(px - halfLen).toFixed(2));
+        const p0z = snappedStart ? snappedStart[1] : pz;
+        const p1x = snappedStart ? Number(clampCoord(snappedStart[0] + halfLen * 1.7).toFixed(2)) : Number(clampCoord(px + halfLen).toFixed(2));
+        const p1z = p0z;
+        points = [
+          [p0x, p0z],
+          [Number(((p0x + p1x) * 0.5).toFixed(2)), Number(((p0z + p1z) * 0.5).toFixed(2))],
+          [p1x, p1z],
+        ];
+      }
+    }
+
+    const endPt = points[points.length - 1] || [px, pz];
+    placedId = `local-${isWaterPath ? "water" : "road"}-${uid}`;
+    const newPathObj = {
+      id: placedId,
+      kind: srv.pathKind || "road",
+      points,
+      closed: false,
+    };
+    worldData.paths = [...worldData.paths, newPathObj];
+    anchorX = endPt[0];
+    anchorZ = endPt[1];
   } else if (srv.kind === "villager" && srv.villagerSpec) {
     placedKind = "villager";
     placedId = `local-v-${uid}`;
@@ -832,8 +978,11 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2, options = {}) {
       let bestPtIdx = 0;
       for (const p of worldData.paths) {
         if (!kinds.has(p.kind) || !Array.isArray(p.points) || p.points.length < 2) continue;
-        for (let i = 0; i < p.points.length; i++) {
-          const d = Math.hypot(p.points[i][0] - px, p.points[i][1] - pz);
+        const segCount = p.closed ? p.points.length : p.points.length - 1;
+        for (let i = 0; i < segCount; i++) {
+          const a = p.points[i];
+          const b = p.points[(i + 1) % p.points.length];
+          const d = distToSegment2D(px, pz, a[0], a[1], b[0], b[1]);
           if (d < bestDist) {
             bestDist = d;
             bestPath = p;
@@ -845,52 +994,89 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2, options = {}) {
     };
 
     if (srv.behaviorHint === "vehicle_route") {
-      const asphaltHit = findNearestPath(new Set(["road"]));
-      const anyRoadHit = findNearestPath(new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]));
-      const chosen =
-        anyRoadHit.path && anyRoadHit.dist <= 14 && anyRoadHit.dist + 2 < asphaltHit.dist
-          ? anyRoadHit
-          : asphaltHit.path
-            ? asphaltHit
-            : anyRoadHit;
-      if (chosen.path) {
-        const isClosed = Boolean(chosen.path.closed) && chosen.path.points.length >= 4;
-        const pts = chosen.path.points;
-        const wps = isClosed
-          ? pts.map((_, idx) => {
-              const pt = pts[(idx + chosen.ptIdx) % pts.length];
-              return [pt[0], pt[1]];
-            })
-          : chosen.ptIdx > pts.length / 2
-            ? [...pts].reverse().map(([wx, wz]) => [wx, wz])
-            : pts.map(([wx, wz]) => [wx, wz]);
-        finalX = wps[0][0];
-        finalZ = wps[0][1];
-        behavior = {
-          type: "vehicle_route",
-          speed: srv.speed ?? 5.6,
-          waypoints: wps,
-          stops: [],
-          loopMode: isClosed ? "loop" : "pingpong",
-          statusLine: bp.description || srv.description,
-        };
-      } else {
-        const loopR = 9;
-        const wps = [
-          [px, pz],
-          [clampCoord(px + loopR), clampCoord(pz + loopR * 0.4)],
-          [clampCoord(px + loopR * 0.4), clampCoord(pz + loopR)],
-          [clampCoord(px - loopR * 0.5), clampCoord(pz + loopR * 0.5)],
-        ];
-        behavior = {
-          type: "vehicle_route",
-          speed: srv.speed ?? 5.2,
-          waypoints: wps,
-          stops: [],
-          loopMode: "loop",
-          statusLine: bp.description || srv.description,
-        };
+      const drivableKinds = new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]);
+      const roadHit = findNearestPath(drivableKinds);
+      if (!roadHit.path || roadHit.dist > 6.5) {
+        if (!options.silent) {
+          showToast(
+            "Carros só podem entrar em estradas (asfalto, paralelepípedo ou estrada de terra). Clique sobre uma estrada ou construa uma estrada de terra!",
+            3800,
+          );
+        }
+        return null;
       }
+      const chosen = roadHit.path;
+      const isClosed = Boolean(chosen.closed) && chosen.points.length >= 4;
+      let basePts = chosen.points.map(([wx, wz]) => [wx, wz]);
+      if (!isClosed) {
+        const used = new Set([chosen.id]);
+        let extended = true;
+        let guard = 0;
+        while (extended && guard < 24) {
+          extended = false;
+          guard += 1;
+          const head = basePts[0];
+          const tail = basePts[basePts.length - 1];
+          for (const cand of worldData.paths) {
+            if (used.has(cand.id) || cand.closed || !drivableKinds.has(cand.kind) || !Array.isArray(cand.points) || cand.points.length < 2) {
+              continue;
+            }
+            const cStart = cand.points[0];
+            const cEnd = cand.points[cand.points.length - 1];
+            if (Math.hypot(tail[0] - cStart[0], tail[1] - cStart[1]) <= 8.5) {
+              basePts.push(...cand.points.slice(1).map(([wx, wz]) => [wx, wz]));
+              used.add(cand.id);
+              extended = true;
+              break;
+            }
+            if (Math.hypot(tail[0] - cEnd[0], tail[1] - cEnd[1]) <= 8.5) {
+              basePts.push(...[...cand.points].reverse().slice(1).map(([wx, wz]) => [wx, wz]));
+              used.add(cand.id);
+              extended = true;
+              break;
+            }
+            if (Math.hypot(head[0] - cEnd[0], head[1] - cEnd[1]) <= 8.5) {
+              basePts.unshift(...cand.points.slice(0, -1).map(([wx, wz]) => [wx, wz]));
+              used.add(cand.id);
+              extended = true;
+              break;
+            }
+            if (Math.hypot(head[0] - cStart[0], head[1] - cStart[1]) <= 8.5) {
+              basePts.unshift(...[...cand.points].reverse().slice(0, -1).map(([wx, wz]) => [wx, wz]));
+              used.add(cand.id);
+              extended = true;
+              break;
+            }
+          }
+        }
+      }
+      let bestIdx = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < basePts.length; i++) {
+        const d = Math.hypot(basePts[i][0] - px, basePts[i][1] - pz);
+        if (d < bestD) {
+          bestD = d;
+          bestIdx = i;
+        }
+      }
+      const wps = isClosed
+        ? basePts.map((_, idx) => {
+            const pt = basePts[(idx + bestIdx) % basePts.length];
+            return [pt[0], pt[1]];
+          })
+        : bestIdx > basePts.length / 2
+          ? [...basePts].reverse().map(([wx, wz]) => [wx, wz])
+          : basePts.map(([wx, wz]) => [wx, wz]);
+      finalX = wps[0][0];
+      finalZ = wps[0][1];
+      behavior = {
+        type: "vehicle_route",
+        speed: srv.speed ?? 5.6,
+        waypoints: wps,
+        stops: [],
+        loopMode: isClosed ? "loop" : "pingpong",
+        statusLine: bp.description || srv.description,
+      };
     } else if (srv.behaviorHint === "water_float") {
       const riverHit = findNearestPath(new Set(["river", "creek"]));
       let nearestPond = null;
@@ -1083,6 +1269,7 @@ async function placeCatalogPresetAt(preset, x, z, x2, z2, options = {}) {
         x,
         z,
         ...(typeof x2 === "number" && typeof z2 === "number" ? { x2, z2 } : {}),
+        ...(preset.isRoad ? { curveMode: options.curveMode || roadCurveMode } : {}),
       }),
     });
     const contentType = res.headers.get("content-type") || "";
@@ -1091,12 +1278,12 @@ async function placeCatalogPresetAt(preset, x, z, x2, z2, options = {}) {
 
     if (isStaticHostFallback) {
       const localRes = placeCatalogPresetLocally(preset, x, z, x2, z2, options);
-      if (!localRes && !options.silent) {
-        showToast("Não foi possível adicionar agora — tente novamente.", 4000);
-      }
       catalogPlacingInFlight = false;
       updateCatalogPickLabel();
       syncActionControlsUI();
+      if (localRes && preset.isRoad && uiState === "catalog_picking") {
+        syncDockUI();
+      }
       return localRes;
     }
 
@@ -1159,6 +1346,9 @@ async function placeCatalogPresetAt(preset, x, z, x2, z2, options = {}) {
     catalogPlacingInFlight = false;
     updateCatalogPickLabel();
     syncActionControlsUI();
+    if (preset.isRoad && uiState === "catalog_picking") {
+      syncDockUI();
+    }
     return {
       kind: placedKind,
       id: placedId,
@@ -1327,8 +1517,37 @@ async function replaceWorldItem(target, newPreset) {
     syncActionControlsUI();
   };
 
+  const canSwapLocally = () => {
+    if (!isPresetRoadVehicle(newPreset)) return true;
+    const drivableKinds = new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]);
+    for (const p of worldData?.paths || []) {
+      if (!drivableKinds.has(p.kind) || !Array.isArray(p.points) || p.points.length < 2) continue;
+      for (let i = 0; i < p.points.length - 1; i++) {
+        const [ax, az] = p.points[i];
+        const [bx, bz] = p.points[i + 1];
+        const dx = bx - ax;
+        const dz = bz - az;
+        const len2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((target.x - ax) * dx + (target.z - az) * dz) / len2));
+        if (Math.hypot(target.x - (ax + dx * t), target.z - (az + dz * t)) <= 6.5) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   try {
     if (target.id.startsWith("local-")) {
+      if (!canSwapLocally()) {
+        showToast(
+          "Carros só podem ficar em estradas (asfalto, pedra ou estrada de terra).",
+          3800,
+        );
+        catalogPlacingInFlight = false;
+        syncActionControlsUI();
+        return false;
+      }
       removeWorldItemLocally({ ...target, extraPropId: oldExtraPropId });
       const placed = placeCatalogPresetLocally(newPreset, target.x, target.z, null, null, {
         silent: true,
@@ -1361,6 +1580,15 @@ async function replaceWorldItem(target, newPreset) {
       res.status === 404 || res.status === 405 || !contentType.includes("application/json");
 
     if (isStaticHostFallback) {
+      if (!canSwapLocally()) {
+        showToast(
+          "Carros só podem ficar em estradas (asfalto, pedra ou estrada de terra).",
+          3800,
+        );
+        catalogPlacingInFlight = false;
+        syncActionControlsUI();
+        return false;
+      }
       removeWorldItemLocally({ ...target, extraPropId: oldExtraPropId });
       const placed = placeCatalogPresetLocally(newPreset, target.x, target.z, null, null, {
         silent: true,
@@ -1407,6 +1635,15 @@ async function replaceWorldItem(target, newPreset) {
     );
     return true;
   } catch {
+    if (!canSwapLocally()) {
+      showToast(
+        "Carros só podem ficar em estradas (asfalto, pedra ou estrada de terra).",
+        3800,
+      );
+      catalogPlacingInFlight = false;
+      syncActionControlsUI();
+      return false;
+    }
     removeWorldItemLocally({ ...target, extraPropId: oldExtraPropId });
     const placed = placeCatalogPresetLocally(newPreset, target.x, target.z, null, null, {
       silent: true,
@@ -1627,6 +1864,29 @@ selectedCloseBtn?.addEventListener("click", () => {
   syncDockUI();
 });
 
+roadCurveBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const mode = btn.dataset.roadCurve;
+    if (mode !== "straight" && mode !== "left" && mode !== "right" && mode !== "scurve") return;
+    roadCurveMode = mode;
+    syncRoadCurveControlsUI();
+    updateCatalogPickLabel();
+    if (uiState === "catalog_picking") {
+      syncDockUI();
+    }
+  });
+});
+
+roadNewBranchBtn?.addEventListener("click", () => {
+  pendingRoadStart = null;
+  syncRoadCurveControlsUI();
+  updateCatalogPickLabel();
+  if (uiState === "catalog_picking") {
+    syncDockUI();
+  }
+  showToast("Novo trecho iniciado — clique em qualquer lugar do mapa.", 2200);
+});
+
 catalogSwitchBtn?.addEventListener("click", () => {
   pendingSwapTarget = null;
   catalogMenu?.open(pendingCatalogPreset?.categoryId, pendingCatalogPreset?.id);
@@ -1819,7 +2079,18 @@ function syncDockUI() {
     case "catalog_picking":
       if (catalogPickPill) catalogPickPill.hidden = false;
       updateCatalogPickLabel();
-      engine.setSpotPickerState({ mode: "picking" });
+      syncRoadCurveControlsUI();
+      engine.setSpotPickerState({
+        mode: "picking",
+        roadPreview: pendingCatalogPreset?.isRoad
+          ? {
+              pathKind: getPresetPathKind(pendingCatalogPreset),
+              curveMode: roadCurveMode,
+              startPoint: pendingRoadStart,
+            }
+          : null,
+        vehicleRoadOnly: isPresetRoadVehicle(pendingCatalogPreset),
+      });
       break;
     case "catalog_deleting":
       if (deleteModePill) deleteModePill.hidden = false;

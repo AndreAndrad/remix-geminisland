@@ -1725,6 +1725,63 @@ body[data-walk-mobile="1"] .walk-esc-hint {
   border-color: #b42f2f;
 }
 
+.dock-pill-catalog {
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: min(920px, 94vw);
+  row-gap: 6px;
+}
+
+.road-curve-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(22, 27, 24, 0.06);
+  border: 1px solid rgba(22, 27, 24, 0.1);
+}
+
+.road-curve-group[hidden] {
+  display: none !important;
+}
+
+.road-curve-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 580;
+  padding: 4px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.road-curve-btn:hover {
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--ink);
+}
+
+.road-curve-btn.is-active {
+  background: var(--ink);
+  color: var(--white);
+}
+
+.road-branch-btn {
+  border-left: 1px solid rgba(22, 27, 24, 0.12);
+  border-radius: 0 999px 999px 0;
+  margin-left: 2px;
+  padding-left: 10px;
+}
+
+.road-branch-btn[hidden] {
+  display: none !important;
+}
+
 body[data-og-capture="1"] .cam-controls,
 body[data-og-capture="1"] #avatar-btn,
 body[data-og-capture="1"] #menu-btn,

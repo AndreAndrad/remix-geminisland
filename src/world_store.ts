@@ -123,6 +123,8 @@ export type PlaceCreationResult =
   | { ok: true; creation: WorldCreation; world: WorldStateSnapshot }
   | { ok: false; alreadyPlaced?: boolean; myCreationId?: string; error: string };
 
+export type RoadCurveMode = "straight" | "left" | "right" | "scurve";
+
 export interface PlaceCatalogItemInput {
   presetId: string;
   cookieId: string;
@@ -131,6 +133,7 @@ export interface PlaceCatalogItemInput {
   z: number;
   x2?: number | null;
   z2?: number | null;
+  curveMode?: RoadCurveMode | null;
 }
 
 export type PlaceCatalogItemResult =
@@ -2003,36 +2006,236 @@ export class WorldStore {
         Number.isFinite(input.z2);
 
       const isWaterPath = preset.pathKind === "river" || preset.pathKind === "creek";
+      const curveMode: RoadCurveMode =
+        input.curveMode === "left" || input.curveMode === "right" || input.curveMode === "scurve"
+          ? input.curveMode
+          : "straight";
+
+      const drivableKinds = new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]);
       let p0x = px;
       let p0z = pz;
       let p1x = px;
       let p1z = pz;
+      let points: [number, number][] = [];
 
       if (hasSecond) {
         [p1x, p1z] = clampToIsland(input.x2!, input.z2!);
         if (Math.hypot(p1x - p0x, p1z - p0z) < 4) {
           [p1x, p1z] = clampToIsland(p0x + 12, p0z + 3);
         }
+        const dx = p1x - p0x;
+        const dz = p1z - p0z;
+        const dist = Math.max(4, Math.hypot(dx, dz));
+        // Left perpendicular in XZ plane (facing +X, left is -Z)
+        const nx = dz / dist;
+        const nz = -dx / dist;
+
+        if (curveMode === "left" || curveMode === "right") {
+          const sign = curveMode === "left" ? 1 : -1;
+          const bow = Math.min(18, Math.max(3.5, dist * 0.38)) * sign;
+          const cpx = (p0x + p1x) * 0.5 + nx * bow;
+          const cpz = (p0z + p1z) * 0.5 + nz * bow;
+          const steps = 4;
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const omt = 1 - t;
+            const bx = omt * omt * p0x + 2 * omt * t * cpx + t * t * p1x;
+            const bz = omt * omt * p0z + 2 * omt * t * cpz + t * t * p1z;
+            points.push(clampToIsland(bx, bz));
+          }
+        } else if (curveMode === "scurve") {
+          const bow = Math.min(14, Math.max(3.2, dist * 0.32));
+          const cp1x = p0x + dx * 0.33 + nx * bow;
+          const cp1z = p0z + dz * 0.33 + nz * bow;
+          const cp2x = p0x + dx * 0.67 - nx * bow;
+          const cp2z = p0z + dz * 0.67 - nz * bow;
+          const steps = 5;
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const omt = 1 - t;
+            const bx =
+              omt * omt * omt * p0x +
+              3 * omt * omt * t * cp1x +
+              3 * omt * t * t * cp2x +
+              t * t * t * p1x;
+            const bz =
+              omt * omt * omt * p0z +
+              3 * omt * omt * t * cp1z +
+              3 * omt * t * t * cp2z +
+              t * t * t * p1z;
+            points.push(clampToIsland(bx, bz));
+          }
+        } else {
+          const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
+          const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
+          points = [
+            [p0x, p0z],
+            [midX, midZ],
+            [p1x, p1z],
+          ];
+        }
       } else {
-        // First click immediately builds a clean stretch centered right where the user clicked!
-        const halfLen = isWaterPath ? 9.5 : 7;
-        [p0x, p0z] = clampToIsland(px - halfLen, pz);
-        [p1x, p1z] = clampToIsland(px + halfLen, pz);
+        // First click: snap to an adjacent road endpoint if user clicks right on an existing road end!
+        let snappedStart: [number, number] | null = null;
+        if (!isWaterPath) {
+          let bestEndD = 4.6;
+          for (const existing of this.paths) {
+            if (existing.closed || !drivableKinds.has(existing.kind) || existing.points.length < 2) {
+              continue;
+            }
+            const ends: [number, number][] = [
+              existing.points[0],
+              existing.points[existing.points.length - 1],
+            ];
+            for (const end of ends) {
+              const d = Math.hypot(end[0] - px, end[1] - pz);
+              if (d < bestEndD) {
+                bestEndD = d;
+                snappedStart = [end[0], end[1]];
+              }
+            }
+          }
+        }
+
+        const halfLen = isWaterPath ? 9.5 : 8.0;
+        if (curveMode === "left" || curveMode === "right") {
+          const sign = curveMode === "left" ? 1 : -1;
+          const radius = isWaterPath ? 10.5 : 9.5;
+          const startX = snappedStart ? snappedStart[0] : px - halfLen * 0.7;
+          const startZ = snappedStart ? snappedStart[1] : pz + sign * (halfLen * 0.35);
+          // Smooth 90-degree curved road arc starting at (startX, startZ) heading +X and curving left (-Z) or right (+Z)
+          const cx = startX;
+          const cz = startZ - sign * radius;
+          const steps = 4;
+          for (let i = 0; i <= steps; i++) {
+            const ang = (i / steps) * (Math.PI * 0.5);
+            const ax = cx + Math.sin(ang) * radius;
+            const az = cz + sign * Math.cos(ang) * radius;
+            points.push(clampToIsland(ax, az));
+          }
+        } else if (curveMode === "scurve") {
+          const sx = snappedStart ? snappedStart[0] : px - halfLen;
+          const sz = snappedStart ? snappedStart[1] : pz;
+          const ex = sx + halfLen * 2;
+          const ez = sz;
+          const bow = 5.4;
+          const cp1x = sx + halfLen * 0.65;
+          const cp1z = sz - bow;
+          const cp2x = sx + halfLen * 1.35;
+          const cp2z = sz + bow;
+          const steps = 5;
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const omt = 1 - t;
+            const bx =
+              omt * omt * omt * sx +
+              3 * omt * omt * t * cp1x +
+              3 * omt * t * t * cp2x +
+              t * t * t * ex;
+            const bz =
+              omt * omt * omt * sz +
+              3 * omt * omt * t * cp1z +
+              3 * omt * t * t * cp2z +
+              t * t * t * ez;
+            points.push(clampToIsland(bx, bz));
+          }
+        } else {
+          if (snappedStart) {
+            [p0x, p0z] = snappedStart;
+            [p1x, p1z] = clampToIsland(snappedStart[0] + halfLen * 1.7, snappedStart[1]);
+          } else {
+            [p0x, p0z] = clampToIsland(px - halfLen, pz);
+            [p1x, p1z] = clampToIsland(px + halfLen, pz);
+          }
+          const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
+          const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
+          points = [
+            [p0x, p0z],
+            [midX, midZ],
+            [p1x, p1z],
+          ];
+        }
       }
 
-      const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
-      const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
+      const endPt = points[points.length - 1] ?? [px, pz];
       const newPath: WorldPath = {
         id: `user-${isWaterPath ? "water" : "road"}-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 6)}`,
         kind: preset.pathKind ?? "road",
-        points: [
-          [p0x, p0z],
-          [midX, midZ],
-          [p1x, p1z],
-        ],
+        points,
         closed: false,
       };
       this.paths.push(newPath);
+
+      // If this is a drivable road (asphalt, cobblestone, dirt road), update any user-placed vehicles
+      // whose open route touches this new curved stretch so they smoothly drive onto it!
+      if (!isWaterPath && drivableKinds.has(newPath.kind)) {
+        const newStart = newPath.points[0];
+        const newEnd = newPath.points[newPath.points.length - 1];
+        for (const c of this.creations) {
+          if (c.isSeed || c.isCompanion || c.behavior?.type !== "vehicle_route") continue;
+          if (c.behavior.loopMode === "loop") continue;
+          const wps = c.behavior.waypoints;
+          if (!Array.isArray(wps) || wps.length < 2) continue;
+          const vHead = wps[0];
+          const vTail = wps[wps.length - 1];
+          const touches =
+            Math.hypot(vHead[0] - newStart[0], vHead[1] - newStart[1]) <= 8.5 ||
+            Math.hypot(vHead[0] - newEnd[0], vHead[1] - newEnd[1]) <= 8.5 ||
+            Math.hypot(vTail[0] - newStart[0], vTail[1] - newStart[1]) <= 8.5 ||
+            Math.hypot(vTail[0] - newEnd[0], vTail[1] - newEnd[1]) <= 8.5;
+          if (!touches) continue;
+          // Re-chain all connected unclosed drivable paths starting from newPath
+          const used = new Set<string>([newPath.id]);
+          const chained: [number, number][] = newPath.points.map(([wx, wz]) => [wx, wz]);
+          let extended = true;
+          let guard = 0;
+          while (extended && guard < 24) {
+            extended = false;
+            guard += 1;
+            const head = chained[0];
+            const tail = chained[chained.length - 1];
+            for (const cand of this.paths) {
+              if (used.has(cand.id) || cand.closed || !drivableKinds.has(cand.kind)) continue;
+              if (!Array.isArray(cand.points) || cand.points.length < 2) continue;
+              const cStart = cand.points[0];
+              const cEnd = cand.points[cand.points.length - 1];
+              if (Math.hypot(tail[0] - cStart[0], tail[1] - cStart[1]) <= 8.5) {
+                chained.push(...cand.points.slice(1).map(([wx, wz]): [number, number] => [wx, wz]));
+                used.add(cand.id);
+                extended = true;
+                break;
+              }
+              if (Math.hypot(tail[0] - cEnd[0], tail[1] - cEnd[1]) <= 8.5) {
+                const rev = [...cand.points].reverse();
+                chained.push(...rev.slice(1).map(([wx, wz]): [number, number] => [wx, wz]));
+                used.add(cand.id);
+                extended = true;
+                break;
+              }
+              if (Math.hypot(head[0] - cEnd[0], head[1] - cEnd[1]) <= 8.5) {
+                chained.unshift(...cand.points.slice(0, -1).map(([wx, wz]): [number, number] => [wx, wz]));
+                used.add(cand.id);
+                extended = true;
+                break;
+              }
+              if (Math.hypot(head[0] - cStart[0], head[1] - cStart[1]) <= 8.5) {
+                const rev = [...cand.points].reverse();
+                chained.unshift(...rev.slice(0, -1).map(([wx, wz]): [number, number] => [wx, wz]));
+                used.add(cand.id);
+                extended = true;
+                break;
+              }
+            }
+          }
+          if (chained.length >= 2) {
+            c.behavior = {
+              ...c.behavior,
+              waypoints: chained,
+            };
+          }
+        }
+      }
+
       this.version += 1;
       this.schedulePersist();
       const snap = this.getWorldSnapshot(input.cookieId, input.dayKey);
@@ -2045,8 +2248,8 @@ export class WorldStore {
         ok: true,
         kind: "road",
         name: preset.name,
-        x: hasSecond ? p1x : p1x,
-        z: hasSecond ? p1z : p1z,
+        x: endPt[0],
+        z: endPt[1],
         path: newPath,
         world: snap,
       };
@@ -2198,92 +2401,65 @@ export class WorldStore {
     };
 
     if (preset.behaviorHint === "vehicle_route") {
-      // Always snap cars, patrol cars, fire trucks, and construction machinery onto the island's roads!
-      let nearestAsphalt: WorldPath | null = null;
-      let nearestAsphaltDist = Infinity;
-      let nearestAnyRoad: WorldPath | null = null;
-      let nearestAnyDist = Infinity;
+      // Vehicles ONLY enter and drive on existing roads (asphalt, cobblestone, cottage road, OR dirt road).
+      // If there is NO road (not even a dirt road) at the clicked spot, block placement — never drive on grass!
+      const DRIVABLE_KINDS = new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]);
+      const MAX_ROAD_ENTRY_DIST = 6.5;
+
+      let nearestRoad: WorldPath | null = null;
+      let nearestRoadDist = Infinity;
 
       for (const p of this.paths) {
         if (!Array.isArray(p.points) || p.points.length < 2) continue;
-        const isAsphalt = p.kind === "road";
-        const isDrivable =
-          isAsphalt || p.kind === "cobblestone" || p.kind === "cottage_road" || p.kind === "dirt_trail";
-        if (!isDrivable) continue;
-        const curve = sampleCatmullRom2D(p.points, Boolean(p.closed), 1.0);
+        if (!DRIVABLE_KINDS.has(p.kind)) continue;
+        const curve = sampleCatmullRom2D(p.points, Boolean(p.closed), 0.9);
         const hit = distPointToPolyline2D(px, pz, curve);
-        if (hit.dist < nearestAnyDist) {
-          nearestAnyDist = hit.dist;
-          nearestAnyRoad = p;
-        }
-        if (isAsphalt && hit.dist < nearestAsphaltDist) {
-          nearestAsphaltDist = hit.dist;
-          nearestAsphalt = p;
+        if (hit.dist < nearestRoadDist) {
+          nearestRoadDist = hit.dist;
+          nearestRoad = p;
         }
       }
 
-      // Prefer a nearby secondary road if the user clicked directly on it (<=14m); otherwise ALWAYS use asphalt road!
-      const chosenRoad =
-        nearestAnyRoad && nearestAnyDist <= 14 && nearestAnyDist + 2 < nearestAsphaltDist
-          ? nearestAnyRoad
-          : nearestAsphalt ?? nearestAnyRoad;
-
-      if (chosenRoad) {
-        const isClosed = Boolean(chosenRoad.closed) && chosenRoad.points.length >= 4;
-        const basePts = isClosed
-          ? chosenRoad.points
-          : chainConnectedUnclosedPaths(
-              chosenRoad,
-              new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]),
-              9.5,
-            );
-        let bestIdx = 0;
-        let bestD = Infinity;
-        for (let i = 0; i < basePts.length; i++) {
-          const d = Math.hypot(basePts[i][0] - px, basePts[i][1] - pz);
-          if (d < bestD) {
-            bestD = d;
-            bestIdx = i;
-          }
-        }
-        const wps: [number, number][] = isClosed
-          ? basePts.map((_, idx) => {
-              const pt = basePts[(idx + bestIdx) % basePts.length];
-              return [pt[0], pt[1]];
-            })
-          : bestIdx > basePts.length / 2
-            ? [...basePts].reverse().map(([wx, wz]) => [wx, wz])
-            : basePts.map(([wx, wz]) => [wx, wz]);
-        finalX = wps[0][0];
-        finalZ = wps[0][1];
-        behavior = {
-          type: "vehicle_route",
-          speed: preset.speed ?? 5.6,
-          waypoints: wps,
-          stops: [],
-          loopMode: isClosed ? "loop" : "pingpong",
-          statusLine: bp.description,
-        };
-      } else {
-        // Fallback only if no road exists anywhere on the island
-        const loopR = 9;
-        const wps: [number, number][] = [
-          clampToIsland(px, pz),
-          clampToIsland(px + loopR, pz + loopR * 0.4),
-          clampToIsland(px + loopR * 0.4, pz + loopR),
-          clampToIsland(px - loopR * 0.5, pz + loopR * 0.5),
-        ];
-        finalX = wps[0][0];
-        finalZ = wps[0][1];
-        behavior = {
-          type: "vehicle_route",
-          speed: preset.speed ?? 5.2,
-          waypoints: wps,
-          stops: [],
-          loopMode: "loop",
-          statusLine: bp.description,
+      if (!nearestRoad || nearestRoadDist > MAX_ROAD_ENTRY_DIST) {
+        return {
+          ok: false,
+          status: 400,
+          error:
+            "Carros só podem entrar em estradas (asfalto, paralelepípedo ou estrada de terra). Clique sobre uma estrada ou construa uma estrada de terra neste local!",
         };
       }
+
+      const isClosed = Boolean(nearestRoad.closed) && nearestRoad.points.length >= 4;
+      const basePts = isClosed
+        ? nearestRoad.points
+        : chainConnectedUnclosedPaths(nearestRoad, DRIVABLE_KINDS, 8.5);
+      let bestIdx = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < basePts.length; i++) {
+        const d = Math.hypot(basePts[i][0] - px, basePts[i][1] - pz);
+        if (d < bestD) {
+          bestD = d;
+          bestIdx = i;
+        }
+      }
+      const wps: [number, number][] = isClosed
+        ? basePts.map((_, idx) => {
+            const pt = basePts[(idx + bestIdx) % basePts.length];
+            return [pt[0], pt[1]];
+          })
+        : bestIdx > basePts.length / 2
+          ? [...basePts].reverse().map(([wx, wz]) => [wx, wz])
+          : basePts.map(([wx, wz]) => [wx, wz]);
+      finalX = wps[0][0];
+      finalZ = wps[0][1];
+      behavior = {
+        type: "vehicle_route",
+        speed: preset.speed ?? 5.6,
+        waypoints: wps,
+        stops: [],
+        loopMode: isClosed ? "loop" : "pingpong",
+        statusLine: bp.description,
+      };
     } else if (preset.behaviorHint === "water_float") {
       // Snap boats onto nearby rivers/creeks, lakes, coastal ocean, or auto-create a lagoon beneath them!
       const rawX = Number(clampCoord(input.x).toFixed(2));
@@ -2593,6 +2769,38 @@ export class WorldStore {
     const newPreset = getCatalogPreset(input.newPresetId);
     if (!newPreset) {
       return { ok: false, status: 404, error: "Novo item do catálogo não encontrado." };
+    }
+    // Pre-check road requirement if swapping into a vehicle so we never delete the old item on invalid off-road swap
+    if (newPreset.behaviorHint === "vehicle_route") {
+      let targetPos: [number, number] | null = null;
+      if (input.targetKind === "creation") {
+        const c = this.creations.find((item) => item.id === input.targetId);
+        if (c) targetPos = [c.x, c.z];
+      } else if (input.targetKind === "pond") {
+        const p = this.props.find((item) => item.id === input.targetId);
+        if (p) targetPos = [p.x, p.z];
+      } else if (input.targetKind === "villager") {
+        const v = this.villagers.find((item) => item.id === input.targetId);
+        if (v) targetPos = [v.homeX, v.homeZ];
+      }
+      if (targetPos) {
+        const drivable = new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]);
+        let minRoadD = Infinity;
+        for (const p of this.paths) {
+          if (!drivable.has(p.kind) || p.points.length < 2) continue;
+          const curve = sampleCatmullRom2D(p.points, Boolean(p.closed), 0.9);
+          const hit = distPointToPolyline2D(targetPos[0], targetPos[1], curve);
+          if (hit.dist < minRoadD) minRoadD = hit.dist;
+        }
+        if (minRoadD > 6.5) {
+          return {
+            ok: false,
+            status: 400,
+            error:
+              "Carros só podem entrar em estradas (asfalto, paralelepípedo ou estrada de terra). Este local não tem estrada!",
+          };
+        }
+      }
     }
     const removed = this.removeCatalogItem({
       kind: input.targetKind,

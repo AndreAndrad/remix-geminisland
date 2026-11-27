@@ -369,6 +369,7 @@ export function planVehicleTurnaround({
   hw,
   hl,
   speed,
+  roadHalfWidth = 2.05,
   buildingPeers,
   ponds,
   selfEnt,
@@ -376,9 +377,12 @@ export function planVehicleTurnaround({
   clampPointToIslandFn,
 }) {
   const nextDir = whichEnd === "end" ? -1 : 1;
-  const padR = Math.max(0.82, hw * 0.9);
+  const padR = Math.max(0.72, hw * 0.82);
+  const isNarrowRoad = roadHalfWidth < 1.75;
+  const maxTurnSide = isNarrowRoad ? Math.max(0.32, roadHalfWidth * 0.42) : 0.85;
+  const maxTurnBulb = isNarrowRoad ? 0.92 : 1.55;
 
-  const candidateBackOffsets = [0.95, 2.6, 4.8, 7.2];
+  const candidateBackOffsets = isNarrowRoad ? [0.75, 1.85, 3.2] : [0.95, 2.4, 4.2, 6.0];
   let bestCand = null;
   let bestScore = -Infinity;
 
@@ -409,13 +413,13 @@ export function planVehicleTurnaround({
     const rDelta = dx * rX + dz * rZ;
 
     for (const side of [-1, 1]) {
-      const bulbFwd = 2.55;
+      const bulbFwd = maxTurnBulb;
       const apexX =
-        curX + fX * (Math.max(0, fEnd * 0.5) + bulbFwd) + rX * (rDelta * 0.5 + side * 0.85);
+        curX + fX * (Math.max(0, fEnd * 0.4) + bulbFwd) + rX * (rDelta * 0.5 + side * maxTurnSide);
       const apexZ =
-        curZ + fZ * (Math.max(0, fEnd * 0.5) + bulbFwd) + rZ * (rDelta * 0.5 + side * 0.85);
-      const midSideX = curX + fX * (bulbFwd * 0.55) + rX * (side * 1.45);
-      const midSideZ = curZ + fZ * (bulbFwd * 0.55) + rZ * (side * 1.45);
+        curZ + fZ * (Math.max(0, fEnd * 0.4) + bulbFwd) + rZ * (rDelta * 0.5 + side * maxTurnSide);
+      const midSideX = curX + fX * (bulbFwd * 0.55) + rX * (side * maxTurnSide);
+      const midSideZ = curZ + fZ * (bulbFwd * 0.55) + rZ * (side * maxTurnSide);
 
       const cApex = checkPointClearance(
         apexX,
@@ -459,7 +463,7 @@ export function planVehicleTurnaround({
           fEnd,
           rDelta,
           side,
-          bulbFwd: clamp(2.35 + Math.min(1.1, Math.max(0, minClear) * 0.3), 2.1, 3.4),
+          bulbFwd: maxTurnBulb,
         };
       }
     }
@@ -469,28 +473,29 @@ export function planVehicleTurnaround({
     minClear: -1,
     candDist:
       whichEnd === "end"
-        ? Math.max(0.25, routeLength - 0.95)
-        : Math.min(routeLength - 0.25, 0.95),
+        ? Math.max(0.25, routeLength - 0.85)
+        : Math.min(routeLength - 0.25, 0.85),
     endYaw: wrapPi(curYaw + Math.PI),
     fEnd: 0,
     rDelta: -2.0 * curLaneOffset,
     side: -1,
-    bulbFwd: 2.35,
+    bulbFwd: maxTurnBulb,
   };
 
-  const mode = chosen.minClear >= -0.05 ? "uturn" : "three_point";
+  // On narrow dirt/stone roads, always execute a compact on-road 3-point turnaround instead of swinging onto grass
+  const mode = !isNarrowRoad && chosen.minClear >= 0.05 ? "uturn" : "three_point";
   const baseSpd = clamp(speed || 5.2, 3.2, 7.5);
-  const clampedFEnd = clamp(chosen.fEnd, -6.0, 4.2);
+  const clampedFEnd = clamp(chosen.fEnd, -4.5, 2.2);
   const approxArc =
     Math.hypot(clampedFEnd, chosen.rDelta) +
-    Math.PI * Math.max(1.6, Math.abs(chosen.rDelta) * 0.65) +
-    2.8;
+    Math.PI * Math.max(1.1, Math.abs(chosen.rDelta) * 0.55) +
+    2.0;
   // Conservative duration so peak turnaround speed never exceeds ~58% of baseSpeed
-  const calmTurnSpeed = Math.max(1.85, baseSpd * 0.5);
+  const calmTurnSpeed = Math.max(1.75, baseSpd * 0.48);
   const duration =
     mode === "uturn"
-      ? clamp((approxArc * 1.35) / calmTurnSpeed, 3.2, 5.4)
-      : clamp((approxArc * 1.45) / calmTurnSpeed + hl * 0.15, 3.8, 5.8);
+      ? clamp((approxArc * 1.25) / calmTurnSpeed, 2.8, 4.8)
+      : clamp((approxArc * 1.35) / calmTurnSpeed + hl * 0.14, 3.0, 5.0);
 
   return {
     mode,
@@ -504,6 +509,8 @@ export function planVehicleTurnaround({
     rDelta: chosen.rDelta,
     bulbFwd: chosen.bulbFwd,
     side: chosen.side,
+    roadHalfWidth,
+    tightScale: isNarrowRoad ? 0.5 : 0.78,
     nextDir,
     nextRouteDist: chosen.candDist,
     nextLaneOffset: targetReturnLane,
@@ -546,20 +553,17 @@ export function stepVehicleTurnaround(turn, dt) {
   let speedFactor = 0.45;
   let steerRoll = 0;
 
+  const tight = turn.tightScale ?? 0.78;
   if (turn.mode === "uturn") {
     const s = 0.35 * rawS + 0.65 * smoothstep01(rawS);
     const phi = s * Math.PI;
     const sinPhi = Math.sin(phi);
     const cosPhi = Math.cos(phi);
 
-    const halfR = Math.abs(turn.rDelta) >= 0.4 ? turn.rDelta * 0.5 : turn.side * 1.15;
+    const halfR = Math.abs(turn.rDelta) >= 0.35 ? turn.rDelta * 0.5 : turn.side * (0.95 * tight);
     const turnDirSign = halfR >= 0 ? 1 : -1;
-    const effHalfR = turnDirSign * Math.max(1.45, Math.abs(halfR));
-    const minForwardBulb = Math.max(1.75, -turn.fEnd / Math.PI + 1.1);
-    const circBulbFwd = Math.max(
-      minForwardBulb,
-      Math.min(turn.bulbFwd + 0.8, Math.abs(effHalfR) * 1.08),
-    );
+    const effHalfR = turnDirSign * Math.min(Math.max(0.72, (turn.roadHalfWidth || 2.05) * 0.62), Math.max(0.75, Math.abs(halfR)));
+    const circBulbFwd = Math.min(turn.bulbFwd || 1.35, Math.max(0.85, Math.abs(effHalfR) * 1.05));
 
     const extraApex = (effHalfR - halfR) * sinPhi * sinPhi;
     localF = turn.fEnd * s + circBulbFwd * sinPhi;
@@ -570,10 +574,10 @@ export function stepVehicleTurnaround(turn, dt) {
     speedFactor = 0.28 + 0.38 * Math.sin(rawS * Math.PI);
     steerRoll = clamp(turnDirSign * 0.032 * Math.sin(rawS * Math.PI), -0.045, 0.045);
   } else {
-    const f1 = 1.55;
-    const r1 = turn.side * 1.12;
-    const f2 = clamp(turn.fEnd * 0.65 - 0.8, -2.2, 0.75);
-    const r2 = turn.rDelta * 0.72 - turn.side * 0.45;
+    const f1 = 1.15 * tight;
+    const r1 = turn.side * (0.78 * tight);
+    const f2 = clamp(turn.fEnd * 0.6 - 0.65 * tight, -1.6, 0.55);
+    const r2 = turn.rDelta * 0.72 - turn.side * (0.35 * tight);
 
     const yaw1 = turn.startYaw + totalTurnAngle * 0.38;
     const yaw2 = turn.startYaw + totalTurnAngle * 0.78;
@@ -682,7 +686,8 @@ export function computeProactiveTrafficControl({
   x,
   z,
   yaw,
-  cruiseLane = 1.12,
+  cruiseLane = 1.02,
+  roadHalfWidth = 2.05,
   hw,
   hl,
   speed,
@@ -747,9 +752,9 @@ export function computeProactiveTrafficControl({
   }
 
   // Also check static environment clearance along the left passing lane (now and 4m ahead)
-  let leftEnvClear = true;
-  if (buildingPeers || ponds || citySignPos || clampPointToIslandFn) {
-    const probeShift = -2.25;
+  let leftEnvClear = roadHalfWidth >= 1.85;
+  if (leftEnvClear && (buildingPeers || ponds || citySignPos || clampPointToIslandFn)) {
+    const probeShift = -Math.min(2.0, roadHalfWidth * 0.95);
     const cNow = checkPointClearance(
       x + rightX * probeShift,
       z + rightZ * probeShift,
@@ -1179,6 +1184,60 @@ export function stepWorldVehiclePhysicsPass({
         const [ix, iz] = clampPointToIslandFn(veh.x, veh.z, phys.hw + 0.9);
         veh.x = ix;
         veh.z = iz;
+      }
+
+      // Strict Road-Corridor Constraint: keep vehicles strictly on their road surface (never off-road on grass!)
+      const entRef = U.ent;
+      if (entRef?.routeCurve && entRef.routeLength > 1) {
+        const rLen = entRef.routeLength;
+        const baseD = veh.routeDist || 0;
+        const win = Math.min(8.5, rLen * 0.3);
+        let bestPtX = veh.x;
+        let bestPtZ = veh.z;
+        let bestD2 = Infinity;
+        let bestU = 0;
+        const steps = 12;
+        for (let k = 0; k <= steps; k++) {
+          let candD = baseD - win + (2 * win * k) / steps;
+          if (entRef.routeClosed) {
+            candD = ((candD % rLen) + rLen) % rLen;
+          } else {
+            candD = clamp(candD, 0, rLen);
+          }
+          const u = clamp(candD / rLen, 0.0005, 0.9995);
+          const pt = entRef.routeCurve.getPointAt(u);
+          const d2 = (veh.x - pt.x) * (veh.x - pt.x) + (veh.z - pt.z) * (veh.z - pt.z);
+          if (d2 < bestD2) {
+            bestD2 = d2;
+            bestPtX = pt.x;
+            bestPtZ = pt.z;
+            bestU = u;
+          }
+        }
+        const roadHW = Number.isFinite(entRef.currentRoadHalfWidth)
+          ? entRef.currentRoadHalfWidth
+          : 2.05;
+        const maxCorridor = Math.max(
+          0.22,
+          roadHW - phys.hw * 0.55 + (phys.turnState ? 0.35 : 0),
+        );
+        const distFromRoad = Math.sqrt(bestD2);
+        if (distFromRoad > maxCorridor && distFromRoad > 1e-5) {
+          const pull = (distFromRoad - maxCorridor) / distFromRoad;
+          veh.x -= (veh.x - bestPtX) * pull;
+          veh.z -= (veh.z - bestPtZ) * pull;
+        } else if (!entRef.routeClosed && (bestU <= 0.002 || bestU >= 0.998)) {
+          // Prevent overshooting past an open road dead-end onto bare grass
+          const tan = entRef.routeCurve.getTangentAt(bestU);
+          const outSign = bestU >= 0.998 ? 1 : -1;
+          const overshoot = (veh.x - bestPtX) * tan.x * outSign + (veh.z - bestPtZ) * tan.z * outSign;
+          const maxEnd = phys.turnState ? 0.85 : 0.35;
+          if (overshoot > maxEnd) {
+            const back = overshoot - maxEnd;
+            veh.x -= tan.x * outSign * back;
+            veh.z -= tan.z * outSign * back;
+          }
+        }
       }
     }
   }

@@ -1509,7 +1509,7 @@ export function auditAndRepairWorldSpatial(
   for (const p of paths) {
     if (!Array.isArray(p.points) || p.points.length < 2) continue;
 
-    if (SEED_PATH_IDS.has(p.id) || p.id.startsWith("user-road-")) {
+    if (SEED_PATH_IDS.has(p.id) || p.id.startsWith("user-")) {
       if (p.id === "path-green-walk" && p.kind === "dirt_trail") {
         footpathTrimCount++;
         details.push(`refined central "path-green-walk" to garden stepping stones`);

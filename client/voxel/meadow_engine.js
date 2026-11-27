@@ -2131,9 +2131,14 @@ class CreationSimEntity {
       const yaw = Math.atan2(tan.x * dirSign, tan.z * dirSign);
       const rightX = -Math.cos(yaw);
       const rightZ = Math.sin(yaw);
-      veh.currentLaneOffset = baseLane;
-      veh.x = pos.x + rightX * baseLane;
-      veh.z = pos.z + rightZ * baseLane;
+      const roadHW = Number.isFinite(this.currentRoadHalfWidth) ? this.currentRoadHalfWidth : 2.05;
+      const effLane =
+        roadHW < 1.75
+          ? 0
+          : Math.min(baseLane, Math.max(0.16, roadHW - (veh.phys?.hw || 0.9) * 0.72));
+      veh.currentLaneOffset = effLane;
+      veh.x = pos.x + rightX * effLane;
+      veh.z = pos.z + rightZ * effLane;
       veh.y = 0.092;
       veh.yaw = yaw;
       if (veh === this) {
@@ -2150,13 +2155,13 @@ class CreationSimEntity {
         veh.phys.anchorZ = veh.z;
       }
     };
-    syncUnit(this, this.isDualTransit ? 0.68 : 1.12);
+    syncUnit(this, this.isDualTransit ? 0.68 : 0.96);
     if (this.secondaryVehicle) {
-      syncUnit(this.secondaryVehicle, 1.24);
+      syncUnit(this.secondaryVehicle, 1.08);
     }
   }
 
-  stepVehicleUnitKinematics(veh, isSecondary, dt, t, vehiclePeers, buildingPeers, ponds) {
+  stepVehicleUnitKinematics(veh, isSecondary, dt, t, vehiclePeers, buildingPeers, ponds, worldPaths) {
     if (!this.routeCurve) return;
     this.hasSteppedOnce = true;
 
@@ -2167,8 +2172,58 @@ class CreationSimEntity {
     phys.frameStartX = prevX;
     phys.frameStartZ = prevZ;
 
+    // Detect road half-width under vehicle (asphalt = 2.05m 2-lane, dirt/cobble/cottage = ~1.4m single-lane centered)
+    let roadHalfWidth = 2.05;
+    let isSingleLaneRoad = false;
+    if (Array.isArray(worldPaths) && worldPaths.length > 0) {
+      let bestKind = null;
+      let bestD = Infinity;
+      for (let i = 0; i < worldPaths.length; i++) {
+        const p = worldPaths[i];
+        if (
+          !p?.points ||
+          p.points.length < 2 ||
+          (p.kind !== "road" &&
+            p.kind !== "cobblestone" &&
+            p.kind !== "cottage_road" &&
+            p.kind !== "dirt_trail")
+        ) {
+          continue;
+        }
+        const pts = p.points;
+        for (let j = 0; j < pts.length - 1; j++) {
+          const ax = pts[j][0];
+          const az = pts[j][1];
+          const bx = pts[j + 1][0];
+          const bz = pts[j + 1][1];
+          const abx = bx - ax;
+          const abz = bz - az;
+          const l2 = abx * abx + abz * abz;
+          const tSeg = l2 > 1e-6 ? Math.max(0, Math.min(1, ((veh.x - ax) * abx + (veh.z - az) * abz) / l2)) : 0;
+          const d = Math.hypot(veh.x - (ax + abx * tSeg), veh.z - (az + abz * tSeg));
+          if (d < bestD) {
+            bestD = d;
+            bestKind = p.kind;
+          }
+        }
+      }
+      if (bestKind === "dirt_trail") {
+        roadHalfWidth = 1.48;
+        isSingleLaneRoad = true;
+      } else if (bestKind === "cobblestone") {
+        roadHalfWidth = 1.38;
+        isSingleLaneRoad = true;
+      } else if (bestKind === "cottage_road") {
+        roadHalfWidth = 1.32;
+        isSingleLaneRoad = true;
+      }
+    }
+    this.currentRoadHalfWidth = roadHalfWidth;
+
+    const maxRoadLane = Math.max(0.14, roadHalfWidth - phys.hw * 0.72);
     const unitId = isSecondary ? `${this.id}#sec` : this.id;
-    const cruiseLane = isSecondary ? 1.24 : this.isDualTransit ? 0.68 : 1.12;
+    const rawCruise = isSecondary ? 1.08 : this.isDualTransit ? 0.68 : 0.96;
+    const cruiseLane = isSingleLaneRoad ? 0 : Math.min(rawCruise, maxRoadLane);
     const baseSpeed = isSecondary
       ? veh.speed || 4.35
       : this.effectiveSpeed || this.data?.behavior?.speed || 5.5;
@@ -2181,6 +2236,7 @@ class CreationSimEntity {
         z: veh.z,
         yaw: veh.yaw,
         cruiseLane,
+        roadHalfWidth,
         hw: phys.hw,
         hl: phys.hl,
         speed: baseSpeed * 0.5,
@@ -2265,6 +2321,7 @@ class CreationSimEntity {
             hw: phys.hw,
             hl: phys.hl,
             speed: baseSpeed,
+            roadHalfWidth,
             buildingPeers,
             ponds,
             selfEnt: this,
@@ -2342,6 +2399,7 @@ class CreationSimEntity {
       z: veh.z,
       yaw: veh.yaw,
       cruiseLane,
+      roadHalfWidth,
       hw: phys.hw,
       hl: phys.hl,
       speed: baseSpeed,
@@ -2357,8 +2415,23 @@ class CreationSimEntity {
       dt: safeDt,
     });
 
-    speedScale = Math.max(0, Math.min(1.0, Math.min(speedScale, advice.speedScale)));
-    targetLane = Math.max(-2.25, Math.min(2.65, targetLane + advice.extraLaneOffset));
+    // Dynamic curve-hugging: measure upcoming curvature and smoothly slow down + tighten lookahead on curves!
+    const dirSign = this.routeClosed ? 1 : veh.routeDir || 1;
+    const uNowCurve = this.routeClosed
+      ? (((veh.routeDist % this.routeLength) + this.routeLength) % this.routeLength) / this.routeLength
+      : Math.max(0.002, Math.min(0.998, veh.routeDist / this.routeLength));
+    const curveProbeDist = this.routeClosed
+      ? (((veh.routeDist + dirSign * 3.4) % this.routeLength) + this.routeLength) % this.routeLength
+      : Math.max(0.05, Math.min(this.routeLength - 0.05, veh.routeDist + dirSign * 3.4));
+    const uProbeCurve = Math.max(0.002, Math.min(0.998, curveProbeDist / this.routeLength));
+    const tanNowC = this.routeCurve.getTangentAt(uNowCurve);
+    const tanAheadC = this.routeCurve.getTangentAt(uProbeCurve);
+    const curveDot = Math.max(-1, Math.min(1, tanNowC.x * tanAheadC.x + tanNowC.z * tanAheadC.z));
+    const curveTightness = Math.max(0, Math.min(1, (0.985 - curveDot) / 0.28));
+    const cornerSpeedScale = 1.0 - curveTightness * 0.36;
+
+    speedScale = Math.max(0, Math.min(1.0, Math.min(speedScale, advice.speedScale, cornerSpeedScale)));
+    targetLane = Math.max(-maxRoadLane, Math.min(maxRoadLane, targetLane + advice.extraLaneOffset));
 
     if (veh === this) {
       this.yieldTimer = advice.yielding
@@ -2380,10 +2453,9 @@ class CreationSimEntity {
     const maxLaneStep = 1.65 * safeDt;
     veh.currentLaneOffset += Math.max(-maxLaneStep, Math.min(maxLaneStep, laneErr * Math.min(1, safeDt * 4.2)));
 
-    // Pure-pursuit carrot target 2.85m ahead along the route curve
+    // Curve-hugging pure-pursuit carrot target (shortens on tight curves so cars never cut corners onto grass!)
     const endStopMargin = 0.75;
-    const carrotLookAhead = 2.85;
-    const dirSign = this.routeClosed ? 1 : veh.routeDir || 1;
+    const carrotLookAhead = 2.35 - curveTightness * 1.15;
     let carrotDist = veh.routeDist + dirSign * carrotLookAhead;
     let carrotAtTerminus = false;
     if (this.routeClosed) {
@@ -2423,7 +2495,8 @@ class CreationSimEntity {
       -maxLaneStep,
       Math.min(maxLaneStep, detErr * Math.min(1, safeDt * 4.2)),
     );
-    const totalLane = Math.max(-3.0, Math.min(3.0, veh.currentLaneOffset + veh.buildingDetourOffset));
+    // Strictly clamp total lateral lane offset inside the road corridor!
+    const totalLane = Math.max(-maxRoadLane, Math.min(maxRoadLane, veh.currentLaneOffset + veh.buildingDetourOffset));
 
     const goalX = carrotPt.x + carrotRx * totalLane;
     const goalZ = carrotPt.z + carrotRz * totalLane;
@@ -2431,14 +2504,15 @@ class CreationSimEntity {
     const gz = goalZ - veh.z;
     const gDist = Math.hypot(gx, gz);
 
-    // Smooth steering toward carrot goal (NEVER computed from post-collision rebound!)
+    // Smooth steering toward carrot goal (tighter yaw tracking on curved roads!)
     const desiredYaw = gDist > 0.22 ? Math.atan2(gx, gz) : carrotYaw;
     let dYaw = desiredYaw - veh.yaw;
     while (dYaw > Math.PI) dYaw -= Math.PI * 2;
     while (dYaw < -Math.PI) dYaw += Math.PI * 2;
     const speedRatio = baseSpeed > 0.1 ? phys.currentSpeed / baseSpeed : 0;
-    const maxYawStep = safeDt * 2.35 * (0.18 + 0.82 * speedRatio);
-    veh.yaw += Math.max(-maxYawStep, Math.min(maxYawStep, dYaw * Math.min(1, safeDt * 6.5)));
+    const yawRateBoost = 2.45 + curveTightness * 1.45;
+    const maxYawStep = safeDt * yawRateBoost * (0.24 + 0.76 * speedRatio);
+    veh.yaw += Math.max(-maxYawStep, Math.min(maxYawStep, dYaw * Math.min(1, safeDt * 7.5)));
 
     // Step world position strictly <= phys.currentSpeed * safeDt <= baseSpeed * safeDt
     const stepLen = gDist > 1e-4 ? Math.min(gDist, phys.currentSpeed * safeDt) : 0;
@@ -2525,6 +2599,7 @@ class CreationSimEntity {
           hw: phys.hw,
           hl: phys.hl,
           speed: baseSpeed,
+          roadHalfWidth,
           buildingPeers,
           ponds,
           selfEnt: this,
@@ -2535,10 +2610,10 @@ class CreationSimEntity {
     }
   }
 
-  stepSecondaryVehicle(dt, t, buildingPeers, vehiclePeers, ponds, popEase) {
+  stepSecondaryVehicle(dt, t, buildingPeers, vehiclePeers, ponds, popEase, worldPaths) {
     const sv = this.secondaryVehicle;
     if (!sv || !this.routeCurve) return;
-    this.stepVehicleUnitKinematics(sv, true, dt, t, vehiclePeers, buildingPeers, ponds);
+    this.stepVehicleUnitKinematics(sv, true, dt, t, vehiclePeers, buildingPeers, ponds, worldPaths);
     const secPitch =
       (sv.dwellingStop && !sv.phys?.turnState ? 0 : Math.sin(t * 13 + 1.4) * 0.007 * Math.abs(sv.moveFactor || 0)) +
       (sv.phys?.clashPitch || 0);
@@ -2724,7 +2799,8 @@ class CreationSimEntity {
     let rollZ = 0;
 
     if (bType === "vehicle_route" && this.routeCurve) {
-      this.stepVehicleUnitKinematics(this, false, dt, t, vehiclePeers, buildingPeers, ponds);
+      const worldPaths = simCtx?.paths || null;
+      this.stepVehicleUnitKinematics(this, false, dt, t, vehiclePeers, buildingPeers, ponds, worldPaths);
       const rightX = -Math.cos(this.yaw);
       const rightZ = Math.sin(this.yaw);
       this.doorX = this.x + rightX * 1.9 + Math.sin(this.yaw) * 0.9;
@@ -3072,7 +3148,7 @@ class CreationSimEntity {
     }
 
     if (this.secondaryVehicle) {
-      this.stepSecondaryVehicle(dt, t, buildingPeers, vehiclePeers, ponds, popEase);
+      this.stepSecondaryVehicle(dt, t, buildingPeers, vehiclePeers, ponds, popEase, simCtx?.paths || null);
     }
 
     if (this.feedMesh && this.feedMesh.visible) {
@@ -3596,9 +3672,237 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
   const plotMarker = buildPlotMarkerGroup();
   scene.add(plotMarker.group);
 
-  let spotState = { mode: "hidden", x: 16, z: 10 };
+  // Live 3D curved road preview ribbon (shown while hovering to place straight or curved roads/rivers)
+  const roadPreviewGroup = new THREE.Group();
+  roadPreviewGroup.visible = false;
+  const roadPreviewRibbonMat = new THREE.MeshBasicMaterial({
+    color: 0x34d399,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
+    side: THREE.DoubleSide,
+  });
+  const roadPreviewLineMat = new THREE.LineBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.92,
+  });
+  const roadPreviewMesh = new THREE.Mesh(new THREE.BufferGeometry(), roadPreviewRibbonMat);
+  const roadPreviewLine = new THREE.Line(new THREE.BufferGeometry(), roadPreviewLineMat);
+  roadPreviewGroup.add(roadPreviewMesh);
+  roadPreviewGroup.add(roadPreviewLine);
+  scene.add(roadPreviewGroup);
+
+  let spotState = {
+    mode: "hidden",
+    x: 16,
+    z: 10,
+    roadPreview: null,
+    vehicleRoadOnly: false,
+  };
   let previewPlotRadius = 3.3;
   let liveFeedsById = {};
+
+  function findNearestDrivableRoadPoint(gx, gz) {
+    const paths = currentWorld?.paths;
+    if (!Array.isArray(paths) || paths.length === 0) return null;
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < paths.length; i++) {
+      const p = paths[i];
+      if (
+        !p?.points ||
+        p.points.length < 2 ||
+        (p.kind !== "road" &&
+          p.kind !== "cobblestone" &&
+          p.kind !== "cottage_road" &&
+          p.kind !== "dirt_trail")
+      ) {
+        continue;
+      }
+      const pts = p.points;
+      const segCount = p.closed ? pts.length : pts.length - 1;
+      for (let j = 0; j < segCount; j++) {
+        const ax = pts[j][0];
+        const az = pts[j][1];
+        const nextIdx = (j + 1) % pts.length;
+        const bx = pts[nextIdx][0];
+        const bz = pts[nextIdx][1];
+        const abx = bx - ax;
+        const abz = bz - az;
+        const l2 = abx * abx + abz * abz;
+        const tSeg = l2 > 1e-6 ? Math.max(0, Math.min(1, ((gx - ax) * abx + (gz - az) * abz) / l2)) : 0;
+        const cx = ax + abx * tSeg;
+        const cz = az + abz * tSeg;
+        const d = Math.hypot(gx - cx, gz - cz);
+        if (d < bestD) {
+          bestD = d;
+          best = { x: cx, z: cz, dist: d, kind: p.kind, pathId: p.id };
+        }
+      }
+    }
+    return best;
+  }
+
+  function updateRoadPreviewAt(gx, gz) {
+    const rp = spotState.roadPreview;
+    if (spotState.mode !== "picking" || !rp) {
+      roadPreviewGroup.visible = false;
+      return;
+    }
+    const isWater = rp.pathKind === "river" || rp.pathKind === "creek";
+    const curveMode = rp.curveMode || "straight";
+    const startPt = rp.startPoint;
+    const canChain =
+      startPt &&
+      typeof startPt.x === "number" &&
+      typeof startPt.z === "number" &&
+      Math.hypot(gx - startPt.x, gz - startPt.z) >= 3 &&
+      Math.hypot(gx - startPt.x, gz - startPt.z) <= 60;
+
+    const pts2d = [];
+    if (canChain) {
+      const p0x = startPt.x;
+      const p0z = startPt.z;
+      const [p1x, p1z] = clampPointToIsland(gx, gz, 4.5);
+      const dx = p1x - p0x;
+      const dz = p1z - p0z;
+      const dist = Math.max(4, Math.hypot(dx, dz));
+      const nx = dz / dist;
+      const nz = -dx / dist;
+      if (curveMode === "left" || curveMode === "right") {
+        const sign = curveMode === "left" ? 1 : -1;
+        const bow = Math.min(18, Math.max(3.5, dist * 0.38)) * sign;
+        const cpx = (p0x + p1x) * 0.5 + nx * bow;
+        const cpz = (p0z + p1z) * 0.5 + nz * bow;
+        for (let i = 0; i <= 4; i++) {
+          const t = i / 4;
+          const omt = 1 - t;
+          pts2d.push(
+            clampPointToIsland(
+              omt * omt * p0x + 2 * omt * t * cpx + t * t * p1x,
+              omt * omt * p0z + 2 * omt * t * cpz + t * t * p1z,
+              4.5,
+            ),
+          );
+        }
+      } else if (curveMode === "scurve") {
+        const bow = Math.min(14, Math.max(3.2, dist * 0.32));
+        const cp1x = p0x + dx * 0.33 + nx * bow;
+        const cp1z = p0z + dz * 0.33 + nz * bow;
+        const cp2x = p0x + dx * 0.67 - nx * bow;
+        const cp2z = p0z + dz * 0.67 - nz * bow;
+        for (let i = 0; i <= 5; i++) {
+          const t = i / 5;
+          const omt = 1 - t;
+          pts2d.push(
+            clampPointToIsland(
+              omt * omt * omt * p0x + 3 * omt * omt * t * cp1x + 3 * omt * t * t * cp2x + t * t * t * p1x,
+              omt * omt * omt * p0z + 3 * omt * omt * t * cp1z + 3 * omt * t * t * cp2z + t * t * t * p1z,
+              4.5,
+            ),
+          );
+        }
+      } else {
+        pts2d.push([p0x, p0z], [(p0x + p1x) * 0.5, (p0z + p1z) * 0.5], [p1x, p1z]);
+      }
+    } else {
+      const [px, pz] = clampPointToIsland(gx, gz, 4.5);
+      const halfLen = isWater ? 9.5 : 8.0;
+      if (curveMode === "left" || curveMode === "right") {
+        const sign = curveMode === "left" ? 1 : -1;
+        const radius = isWater ? 10.5 : 9.5;
+        const sx = px - halfLen * 0.7;
+        const sz = pz + sign * (halfLen * 0.35);
+        const cx = sx;
+        const cz = sz - sign * radius;
+        for (let i = 0; i <= 4; i++) {
+          const ang = (i / 4) * (Math.PI * 0.5);
+          pts2d.push(clampPointToIsland(cx + Math.sin(ang) * radius, cz + sign * Math.cos(ang) * radius, 4.5));
+        }
+      } else if (curveMode === "scurve") {
+        const sx = px - halfLen;
+        const sz = pz;
+        const ex = sx + halfLen * 2;
+        const ez = sz;
+        const bow = 5.4;
+        const cp1x = sx + halfLen * 0.65;
+        const cp1z = sz - bow;
+        const cp2x = sx + halfLen * 1.35;
+        const cp2z = sz + bow;
+        for (let i = 0; i <= 5; i++) {
+          const t = i / 5;
+          const omt = 1 - t;
+          pts2d.push(
+            clampPointToIsland(
+              omt * omt * omt * sx + 3 * omt * omt * t * cp1x + 3 * omt * t * t * cp2x + t * t * t * ex,
+              omt * omt * omt * sz + 3 * omt * omt * t * cp1z + 3 * omt * t * t * cp2z + t * t * t * ez,
+              4.5,
+            ),
+          );
+        }
+      } else {
+        pts2d.push(clampPointToIsland(px - halfLen, pz, 4.5), [px, pz], clampPointToIsland(px + halfLen, pz, 4.5));
+      }
+    }
+
+    if (pts2d.length < 2) {
+      roadPreviewGroup.visible = false;
+      return;
+    }
+    const vecs = pts2d.map(([vx, vz]) => new THREE.Vector3(vx, 0.16, vz));
+    const curve = new THREE.CatmullRomCurve3(vecs, false, "centripetal", 0.5);
+    const segs = 28;
+    const hw =
+      rp.pathKind === "road"
+        ? 2.1
+        : rp.pathKind === "river"
+          ? 2.2
+          : rp.pathKind === "dirt_trail"
+            ? 1.5
+            : 1.4;
+    const positions = new Float32Array((segs + 1) * 2 * 3);
+    const indices = [];
+    const linePts = [];
+    for (let i = 0; i <= segs; i++) {
+      const u = i / segs;
+      const p = curve.getPointAt(u);
+      const tan = curve.getTangentAt(u);
+      const rx = -tan.z;
+      const rz = tan.x;
+      const rLen = Math.hypot(rx, rz) || 1;
+      const nx = (rx / rLen) * hw;
+      const nz = (rz / rLen) * hw;
+      const base = i * 6;
+      positions[base] = p.x - nx;
+      positions[base + 1] = 0.16;
+      positions[base + 2] = p.z - nz;
+      positions[base + 3] = p.x + nx;
+      positions[base + 4] = 0.16;
+      positions[base + 5] = p.z + nz;
+      linePts.push(new THREE.Vector3(p.x, 0.21, p.z));
+      if (i < segs) {
+        const a = i * 2;
+        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+    roadPreviewMesh.geometry.dispose();
+    const ribGeo = new THREE.BufferGeometry();
+    ribGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    ribGeo.setIndex(indices);
+    roadPreviewMesh.geometry = ribGeo;
+
+    roadPreviewLine.geometry.dispose();
+    roadPreviewLine.geometry = new THREE.BufferGeometry().setFromPoints(linePts);
+
+    roadPreviewRibbonMat.color.setHex(
+      isWater ? 0x38bdf8 : rp.pathKind === "dirt_trail" ? 0xd99b52 : 0x34d399,
+    );
+    roadPreviewGroup.visible = true;
+  }
 
   const creationEntities = new Map();
   const villagerAgents = new Map();
@@ -4343,10 +4647,11 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
           });
         }
       } else if (p.kind === "dirt_trail") {
-        // Gentle country dirt path with rounded ends, soft sandy-loam edge & subtle border stones
+        // Drivable country dirt road with natural sandy-loam shoulders, packed-earth center track & border stones
         const zBias = Math.min(28, pIdx) * 0.00022;
-        pushRibbon(-1, buildRibbonSliceData(curve, samples, 0.98, 0.03 - zBias, "#bfa074", true));
-        pushRibbon(-2, buildRibbonSliceData(curve, samples, 0.68, 0.045 - zBias, "#9b7248", true));
+        pushRibbon(-1, buildRibbonSliceData(curve, samples, 1.52, 0.032 - zBias, "#c4a476", true));
+        pushRibbon(-2, buildRibbonSliceData(curve, samples, 1.18, 0.048 - zBias, "#9f754a", true));
+        pushRibbon(-2.4, buildRibbonSliceData(curve, samples, 0.24, 0.054 - zBias, "#b58d5e", true));
 
         const pebbleCount = Math.max(2, Math.floor(len / 2.8));
         for (let i = 1; i < pebbleCount; i++) {
@@ -4358,22 +4663,22 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
           const nz = tan.x * side;
           pathVoxLayer1NoShadow.push({
             mesh: dirtPebbleProtos[i % dirtPebbleProtos.length],
-            x: pt.x + nx * 0.88,
+            x: pt.x + nx * 1.44,
             y: -0.115,
-            z: pt.z + nz * 0.88,
+            z: pt.z + nz * 1.44,
             rotY: (i * 1.9) % (Math.PI * 2),
           });
         }
       } else if (p.kind === "cobblestone") {
-        // Refined warm stone cobble walkway with rounded limestone bed & staggered low-profile pavers
+        // Drivable warm stone cobble street with rounded limestone bed & staggered low-profile pavers
         const zBias = Math.min(28, pIdx) * 0.00022;
-        pushRibbon(-1, buildRibbonSliceData(curve, samples, 0.88, 0.036 - zBias, "#c4baa6", true));
+        pushRibbon(-1, buildRibbonSliceData(curve, samples, 1.42, 0.036 - zBias, "#c4baa6", true));
         const cobbleCount = Math.max(3, Math.floor(len / 0.95));
         for (let i = 0; i <= cobbleCount; i++) {
           const u = i / cobbleCount;
           const pt = curve.getPointAt(u);
           const tan = curve.getTangentAt(u);
-          const side = ((i % 3) - 1) * 0.16;
+          const side = ((i % 3) - 1) * 0.34;
           const nx = -tan.z * side;
           const nz = tan.x * side;
           pathVoxLayer2NoShadow.push({
@@ -4794,29 +5099,48 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
       nx = def[0];
       nz = def[1];
     }
-    spotState = { mode, x: nx, z: nz };
+    const roadPreview = mode === "picking" && next?.roadPreview ? next.roadPreview : null;
+    const vehicleRoadOnly = mode === "picking" && Boolean(next?.vehicleRoadOnly);
+    spotState = { mode, x: nx, z: nz, roadPreview, vehicleRoadOnly };
 
     if (mode === "hidden") {
       plotMarker.group.visible = false;
       plotMarker.scaffoldGroup.visible = false;
+      roadPreviewGroup.visible = false;
       canvas.style.cursor = "grab";
     } else if (mode === "deleting") {
       plotMarker.group.visible = false;
       plotMarker.scaffoldGroup.visible = false;
+      roadPreviewGroup.visible = false;
       canvas.style.cursor = "crosshair";
     } else if (mode === "picking") {
-      plotMarker.group.visible = true;
       plotMarker.scaffoldGroup.visible = false;
-      plotMarker.ringMat.color.setHex(0xffffff);
-      plotMarker.group.position.set(nx, 0, nz);
+      if (roadPreview) {
+        plotMarker.group.visible = false;
+        updateRoadPreviewAt(nx, nz);
+      } else {
+        roadPreviewGroup.visible = false;
+        plotMarker.group.visible = true;
+        if (vehicleRoadOnly) {
+          const hit = findNearestDrivableRoadPoint(nx, nz);
+          const onRoad = Boolean(hit && hit.dist <= 6.5);
+          plotMarker.ringMat.color.setHex(onRoad ? 0x22c55e : 0xef4444);
+          plotMarker.group.position.set(onRoad ? hit.x : nx, 0, onRoad ? hit.z : nz);
+        } else {
+          plotMarker.ringMat.color.setHex(0xffffff);
+          plotMarker.group.position.set(nx, 0, nz);
+        }
+      }
       canvas.style.cursor = "crosshair";
     } else if (mode === "staked") {
+      roadPreviewGroup.visible = false;
       plotMarker.group.visible = true;
       plotMarker.scaffoldGroup.visible = false;
       plotMarker.ringMat.color.setHex(0xffe57f);
       plotMarker.group.position.set(nx, 0, nz);
       canvas.style.cursor = "grab";
     } else if (mode === "building") {
+      roadPreviewGroup.visible = false;
       plotMarker.group.visible = true;
       plotMarker.scaffoldGroup.visible = true;
       plotMarker.ringMat.color.setHex(0xffe57f);
@@ -6271,10 +6595,23 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
     if (spotState.mode === "picking" && !pointerGesture && activePointers.size === 0) {
       const g = screenToGround(e.clientX, e.clientY);
       if (g) {
-        const snapped = snapToClearMeadowSpot(g[0], g[1], previewPlotRadius);
-        spotState.x = snapped[0];
-        spotState.z = snapped[1];
-        plotMarker.group.position.set(snapped[0], 0, snapped[1]);
+        if (spotState.roadPreview) {
+          spotState.x = g[0];
+          spotState.z = g[1];
+          updateRoadPreviewAt(g[0], g[1]);
+        } else if (spotState.vehicleRoadOnly) {
+          const hit = findNearestDrivableRoadPoint(g[0], g[1]);
+          const onRoad = Boolean(hit && hit.dist <= 6.5);
+          spotState.x = onRoad ? hit.x : g[0];
+          spotState.z = onRoad ? hit.z : g[1];
+          plotMarker.ringMat.color.setHex(onRoad ? 0x22c55e : 0xef4444);
+          plotMarker.group.position.set(spotState.x, 0, spotState.z);
+        } else {
+          const snapped = snapToClearMeadowSpot(g[0], g[1], previewPlotRadius);
+          spotState.x = snapped[0];
+          spotState.z = snapped[1];
+          plotMarker.group.position.set(snapped[0], 0, snapped[1]);
+        }
       }
     }
 
@@ -6441,7 +6778,20 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
         if (!pickedExisting) {
           const g = screenToGround(e.clientX, e.clientY);
           if (g) {
-            const [sx, sz] = snapToClearMeadowSpot(g[0], g[1], previewPlotRadius);
+            let sx;
+            let sz;
+            if (spotState.vehicleRoadOnly) {
+              const roadHit = findNearestDrivableRoadPoint(g[0], g[1]);
+              if (roadHit && roadHit.dist <= 6.5) {
+                sx = roadHit.x;
+                sz = roadHit.z;
+              } else {
+                sx = g[0];
+                sz = g[1];
+              }
+            } else {
+              [sx, sz] = snapToClearMeadowSpot(g[0], g[1], previewPlotRadius);
+            }
             spotState.x = sx;
             spotState.z = sz;
             plotMarker.group.position.set(sx, 0, sz);
@@ -6815,6 +7165,7 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
     rebuildSceneListsIfNeeded();
     simCtx.vehicles = cachedVehicles;
     simCtx.buildings = cachedBuildings;
+    simCtx.paths = currentWorld?.paths || [];
     simCtx.focusX = preFocusX;
     simCtx.focusZ = preFocusZ;
     simCtx.frameTick = frameTick;
