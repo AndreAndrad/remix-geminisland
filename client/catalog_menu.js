@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import { buildCreationGroup } from "./voxel/vox.js";
 import { buildVillagerRig } from "./voxel/villagers.js";
+import BUNDLED_CATALOG_ITEMS from "./catalog_data.json";
 
 export const CATALOG_CATEGORIES = [
   {
@@ -659,12 +660,19 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
   let activeCatId = CATALOG_CATEGORIES[0].id;
   let activePresetId = null;
 
-  // Cached server blueprints/villagers from GET /api/catalog
+  // Pre-populated from static Vite-bundled catalog_data.json (works 100% on Vercel & offline)
   const serverCatalogMap = new Map();
-  let catalogFetchPromise = null;
+  if (Array.isArray(BUNDLED_CATALOG_ITEMS)) {
+    for (const item of BUNDLED_CATALOG_ITEMS) {
+      if (item?.id) {
+        serverCatalogMap.set(item.id, item);
+      }
+    }
+  }
 
   // Shared single offscreen WebGL renderer (lazily initialized, 0% GPU/CPU when closed)
   let previewRenderer = null;
+  let webglUnavailable = false;
   let previewScene = null;
   let previewCamera = null;
   let previewAnchor = null;
@@ -673,8 +681,14 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
   let lastFrameMs = 0;
   let hoveredPresetId = null;
 
+  // Preview-local isolated materials so WebGL context #2 never shares shader programs
+  // with meadow_engine.js's main WebGL context #1.
+  const previewMaterialCache = new Map();
+
   // Cached built 3D preview rigs keyed by presetId: { root, animate, floating, baseYaw }
   const previewModelCache = new Map();
+  // Cached lightweight 2D fallback primitives keyed by presetId
+  const fallbackBoxCache = new Map();
   // Active card slots currently mounted in the DOM: [{ item, ctx, width, height }]
   let visibleCardSlots = [];
 
@@ -716,39 +730,80 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
   const cancelBtn = dialogEl.querySelector('[data-cat-action="cancel"]');
 
   function ensureCatalogLoaded() {
-    if (catalogFetchPromise) return catalogFetchPromise;
-    catalogFetchPromise = fetch("/api/catalog")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.ok && Array.isArray(data.items)) {
-          for (const srv of data.items) {
-            if (srv?.id) {
-              serverCatalogMap.set(srv.id, srv);
-            }
-          }
-          if (dialogEl.open) {
-            renderPreviewFrame(performance.now() * 0.001, true);
-          }
-        }
-        return serverCatalogMap;
-      })
-      .catch(() => serverCatalogMap);
-    return catalogFetchPromise;
+    return Promise.resolve(serverCatalogMap);
+  }
+
+  function getIsolatedPreviewMaterial(sourceMat) {
+    if (sourceMat && sourceMat.vertexColors) {
+      const offsetKey = sourceMat.polygonOffset
+        ? `vc:${sourceMat.polygonOffsetFactor}:${sourceMat.polygonOffsetUnits}`
+        : "vc:0";
+      let cached = previewMaterialCache.get(offsetKey);
+      if (!cached) {
+        cached = new THREE.MeshStandardMaterial({
+          vertexColors: true,
+          roughness: 0.72,
+          metalness: 0.06,
+          ...(sourceMat.polygonOffset
+            ? {
+                polygonOffset: true,
+                polygonOffsetFactor: sourceMat.polygonOffsetFactor,
+                polygonOffsetUnits: sourceMat.polygonOffsetUnits,
+              }
+            : {}),
+        });
+        previewMaterialCache.set(offsetKey, cached);
+      }
+      return cached;
+    }
+    if (sourceMat && typeof sourceMat.clone === "function") {
+      return sourceMat.clone();
+    }
+    return getIsolatedPreviewMaterial({ vertexColors: true });
+  }
+
+  function isolateGroupMaterials(rootObj) {
+    rootObj.traverse((obj) => {
+      if (!obj.isMesh) return;
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+      if (Array.isArray(obj.material)) {
+        obj.material = obj.material.map((m) => getIsolatedPreviewMaterial(m));
+      } else {
+        obj.material = getIsolatedPreviewMaterial(obj.material);
+      }
+    });
   }
 
   function ensurePreviewRenderer() {
-    if (previewRenderer) return true;
+    if (webglUnavailable) return false;
+    if (previewRenderer) {
+      const gl = previewRenderer.getContext?.();
+      if (gl && typeof gl.isContextLost === "function" && gl.isContextLost()) {
+        webglUnavailable = true;
+        previewRenderer = null;
+        return false;
+      }
+      return true;
+    }
     try {
       previewRenderer = new THREE.WebGLRenderer({
         antialias: true,
         alpha: true,
+        preserveDrawingBuffer: true,
         powerPreference: "high-performance",
+      });
+      previewRenderer.domElement.addEventListener("webglcontextlost", (e) => {
+        e.preventDefault();
+        webglUnavailable = true;
+        previewRenderer = null;
       });
       previewRenderer.setPixelRatio(1);
       previewRenderer.setSize(PREVIEW_W, PREVIEW_H, false);
+      previewRenderer.setClearColor(0x000000, 0);
       previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
       previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-      previewRenderer.toneMappingExposure = 1.08;
+      previewRenderer.toneMappingExposure = 1.12;
 
       previewScene = new THREE.Scene();
 
@@ -756,14 +811,14 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
       previewCamera.position.set(3.25, 2.38, 3.65);
       previewCamera.lookAt(0, 0.62, 0);
 
-      const hemi = new THREE.HemisphereLight(0xf6fbff, 0x7cb066, 1.38);
+      const hemi = new THREE.HemisphereLight(0xf6fbff, 0x7cb066, 1.45);
       previewScene.add(hemi);
 
-      const sun = new THREE.DirectionalLight(0xfff5dc, 1.8);
+      const sun = new THREE.DirectionalLight(0xfff5dc, 1.85);
       sun.position.set(5.2, 8.5, 6.2);
       previewScene.add(sun);
 
-      const rim = new THREE.DirectionalLight(0xc4e2ff, 0.58);
+      const rim = new THREE.DirectionalLight(0xc4e2ff, 0.62);
       rim.position.set(-5.0, 4.2, -5.0);
       previewScene.add(rim);
 
@@ -783,8 +838,188 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
       previewScene.add(previewAnchor);
       return true;
     } catch {
+      webglUnavailable = true;
       previewRenderer = null;
       return false;
+    }
+  }
+
+  function shadeHexColor(hex, factor) {
+    const clean = typeof hex === "string" && hex.startsWith("#") ? hex.slice(1) : "88aa88";
+    const full = clean.length === 3
+      ? clean[0] + clean[0] + clean[1] + clean[1] + clean[2] + clean[2]
+      : clean.padEnd(6, "0").slice(0, 6);
+    const num = parseInt(full, 16);
+    if (Number.isNaN(num)) return "#88aa88";
+    const r = Math.min(255, Math.max(0, Math.round(((num >> 16) & 255) * factor)));
+    const g = Math.min(255, Math.max(0, Math.round(((num >> 8) & 255) * factor)));
+    const b = Math.min(255, Math.max(0, Math.round((num & 255) * factor)));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function getFallbackBoxes(item) {
+    if (fallbackBoxCache.has(item.id)) return fallbackBoxCache.get(item.id);
+    const srv = serverCatalogMap.get(item.id);
+    const boxes = [];
+    if (srv?.blueprint) {
+      const pal = srv.blueprint.palette || {};
+      const col = (c) => (typeof c === "string" ? pal[c] || c : "#8aa87e");
+      const allOps = [
+        ...(Array.isArray(srv.blueprint.ops) ? srv.blueprint.ops : []),
+        ...(Array.isArray(srv.blueprint.parts)
+          ? srv.blueprint.parts.flatMap((p) => (Array.isArray(p.ops) ? p.ops : []))
+          : []),
+      ];
+      for (const op of allOps) {
+        if (!op) continue;
+        if (op.op === "box" || op.op === "hollowBox") {
+          boxes.push({
+            x0: op.x0 ?? -2, y0: op.y0 ?? 0, z0: op.z0 ?? -2,
+            x1: op.x1 ?? 2, y1: op.y1 ?? 2, z1: op.z1 ?? 2,
+            color: col(op.color),
+          });
+        } else if (op.op === "roofGable" || op.op === "roofPyramid" || op.op === "roofDome") {
+          const rise = op.rise ?? op.height ?? 3;
+          boxes.push({
+            x0: op.x0 ?? -3, y0: op.yBase ?? 4, z0: op.z0 ?? -3,
+            x1: op.x1 ?? 3, y1: (op.yBase ?? 4) + rise, z1: op.z1 ?? 3,
+            color: col(op.color),
+          });
+        } else if (op.op === "cylinder" || op.op === "cone") {
+          const r = op.r ?? op.rBottom ?? 2;
+          boxes.push({
+            x0: (op.cx ?? 0) - r, y0: op.y0 ?? 0, z0: (op.cz ?? 0) - r,
+            x1: (op.cx ?? 0) + r, y1: op.y1 ?? 4, z1: (op.cz ?? 0) + r,
+            color: col(op.color),
+          });
+        } else if (op.op === "sphere") {
+          const rx = op.rx ?? 2;
+          const ry = op.ry ?? 2;
+          const rz = op.rz ?? 2;
+          boxes.push({
+            x0: (op.cx ?? 0) - rx, y0: (op.cy ?? 2) - ry, z0: (op.cz ?? 0) - rz,
+            x1: (op.cx ?? 0) + rx, y1: (op.cy ?? 2) + ry, z1: (op.cz ?? 0) + rz,
+            color: col(op.color),
+          });
+        }
+      }
+    } else if (srv?.villagerSpec) {
+      const shirt = srv.villagerSpec.shirtColor || "#4c82d4";
+      const hat = srv.villagerSpec.hatColor || "#f5b82e";
+      boxes.push(
+        { x0: -1.5, y0: 0, z0: -1, x1: -0.2, y1: 4, z1: 1, color: "#394a6d" },
+        { x0: 0.2, y0: 0, z0: -1, x1: 1.5, y1: 4, z1: 1, color: "#394a6d" },
+        { x0: -2, y0: 4, z0: -1.2, x1: 2, y1: 9, z1: 1.2, color: shirt },
+        { x0: -1.8, y0: 9, z0: -1.8, x1: 1.8, y1: 12.6, z1: 1.8, color: "#f5cfa8" },
+        { x0: -2, y0: 12.2, z0: -2, x1: 2, y1: 14, z1: 2.4, color: hat },
+      );
+    }
+
+    if (boxes.length === 0) {
+      boxes.push({ x0: -3, y0: 0, z0: -3, x1: 3, y1: 6, z1: 3, color: "#68b562" });
+    }
+
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+    for (const b of boxes) {
+      minX = Math.min(minX, b.x0, b.x1);
+      maxX = Math.max(maxX, b.x0, b.x1);
+      minY = Math.min(minY, b.y0, b.y1);
+      maxY = Math.max(maxY, b.y0, b.y1);
+      minZ = Math.min(minZ, b.z0, b.z1);
+      maxZ = Math.max(maxZ, b.z0, b.z1);
+    }
+    const cx = (minX + maxX) * 0.5;
+    const cz = (minZ + maxZ) * 0.5;
+    const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
+    const data = { boxes: boxes.slice(0, 48), cx, minY, cz, span };
+    fallbackBoxCache.set(item.id, data);
+    return data;
+  }
+
+  function render2DFallbackPreview(slot, yaw, bobY) {
+    const { ctx, width, height, item } = slot;
+    const data = getFallbackBoxes(item);
+    ctx.clearRect(0, 0, width, height);
+
+    const scale = Math.min(width, height) * 0.52 / data.span;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const tilt = 0.52;
+    const originX = width * 0.5;
+    const originY = height * 0.78 - bobY * 18;
+
+    const project = (x, y, z) => {
+      const dx = x - data.cx;
+      const dy = y - data.minY;
+      const dz = z - data.cz;
+      const rx = dx * cosY - dz * sinY;
+      const rz = dx * sinY + dz * cosY;
+      return {
+        sx: originX + rx * scale,
+        sy: originY - dy * scale * 0.92 + rz * scale * tilt,
+        depth: rz,
+      };
+    };
+
+    // Soft ground shadow
+    ctx.save();
+    ctx.fillStyle = "rgba(38, 75, 36, 0.14)";
+    ctx.beginPath();
+    ctx.ellipse(originX, height * 0.8, width * 0.22, height * 0.09, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const sorted = data.boxes
+      .map((b) => {
+        const mx = (b.x0 + b.x1) * 0.5 - data.cx;
+        const my = (b.y0 + b.y1) * 0.5 - data.minY;
+        const mz = (b.z0 + b.z1) * 0.5 - data.cz;
+        const rz = mx * sinY + mz * cosY;
+        return { b, depth: rz + my * 0.08 };
+      })
+      .sort((a, b) => a.depth - b.depth);
+
+    const drawQuad = (pts, fill) => {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].sx, pts[0].sy);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].sx, pts[i].sy);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+    };
+
+    for (const { b } of sorted) {
+      const x0 = Math.min(b.x0, b.x1);
+      const x1 = Math.max(b.x0, b.x1);
+      const y0 = Math.min(b.y0, b.y1);
+      const y1 = Math.max(b.y0, b.y1);
+      const z0 = Math.min(b.z0, b.z1);
+      const z1 = Math.max(b.z0, b.z1);
+
+      const p000 = project(x0, y0, z0);
+      const p100 = project(x1, y0, z0);
+      const p101 = project(x1, y0, z1);
+      const p001 = project(x0, y0, z1);
+      const p010 = project(x0, y1, z0);
+      const p110 = project(x1, y1, z0);
+      const p111 = project(x1, y1, z1);
+      const p011 = project(x0, y1, z1);
+
+      // Draw front-facing sides based on yaw
+      if (cosY >= 0) {
+        drawQuad([p001, p101, p111, p011], shadeHexColor(b.color, 0.92));
+      } else {
+        drawQuad([p000, p100, p110, p010], shadeHexColor(b.color, 0.88));
+      }
+      if (sinY >= 0) {
+        drawQuad([p100, p101, p111, p110], shadeHexColor(b.color, 0.78));
+      } else {
+        drawQuad([p000, p001, p011, p010], shadeHexColor(b.color, 0.78));
+      }
+      // Top face
+      drawQuad([p010, p110, p111, p011], shadeHexColor(b.color, 1.08));
     }
   }
 
@@ -810,6 +1045,8 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
         seed,
         useWorldScale: false,
       });
+      isolateGroupMaterials(model);
+      model.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(model);
       const size = new THREE.Vector3();
       const center = new THREE.Vector3();
@@ -826,6 +1063,7 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
         -box.min.y * scale + 0.02,
         -center.z * scale,
       );
+      model.updateMatrixWorld(true);
       wrapper.add(model);
 
       innerAnim = (t) => {
@@ -857,6 +1095,8 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
         },
         idx,
       );
+      isolateGroupMaterials(rig.root);
+      rig.root.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(rig.root);
       const size = new THREE.Vector3();
       const center = new THREE.Vector3();
@@ -871,6 +1111,7 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
         -box.min.y * scale + 0.02,
         -center.z * scale,
       );
+      rig.root.updateMatrixWorld(true);
       wrapper.add(rig.root);
 
       innerAnim = (t) => {
@@ -901,20 +1142,30 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
     if (!force && nowSec - lastFrameMs < 1 / 32) return;
     lastFrameMs = nowSec;
 
-    if (!ensurePreviewRenderer()) return;
+    const useWebGL = ensurePreviewRenderer();
 
     for (let i = 0; i < visibleCardSlots.length; i++) {
       const slot = visibleCardSlots[i];
-      const entry = getOrBuildPreviewModel(slot.item);
-      if (!entry) continue;
-
-      previewAnchor.clear();
-      previewAnchor.add(entry.root);
-
       const phaseOffset = i * 1.15;
       const t = nowSec + phaseOffset;
       const isHovered = hoveredPresetId === slot.item.id;
       const spinRate = isHovered ? 1.15 : 0.52;
+
+      if (!useWebGL) {
+        const bobY = slot.item.categoryId === "aviao" ? 0.35 + Math.sin(t * 2.4) * 0.12 : 0;
+        render2DFallbackPreview(slot, -0.55 + t * spinRate, bobY);
+        continue;
+      }
+
+      const entry = getOrBuildPreviewModel(slot.item);
+      if (!entry) {
+        render2DFallbackPreview(slot, -0.55 + t * spinRate, 0);
+        continue;
+      }
+
+      previewAnchor.clear();
+      previewAnchor.add(entry.root);
+
       entry.root.rotation.set(0, entry.baseYaw + t * spinRate, 0);
       entry.root.position.y = 0;
       if (entry.animate) {
@@ -927,9 +1178,14 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
         shadowDiscMesh.material.opacity = entry.floating ? 0.1 : 0.16;
       }
 
-      previewRenderer.render(previewScene, previewCamera);
-      slot.ctx.clearRect(0, 0, slot.width, slot.height);
-      slot.ctx.drawImage(previewRenderer.domElement, 0, 0, slot.width, slot.height);
+      try {
+        previewRenderer.render(previewScene, previewCamera);
+        slot.ctx.clearRect(0, 0, slot.width, slot.height);
+        slot.ctx.drawImage(previewRenderer.domElement, 0, 0, slot.width, slot.height);
+      } catch {
+        webglUnavailable = true;
+        render2DFallbackPreview(slot, -0.55 + t * spinRate, 0);
+      }
     }
   }
 
@@ -1107,6 +1363,7 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
     open,
     close,
     preload: ensureCatalogLoaded,
+    getPresetData: (presetId) => serverCatalogMap.get(presetId) || null,
     isOpen: () => Boolean(dialogEl.open),
   };
 }

@@ -2684,6 +2684,11 @@ export interface SerializedCatalogItem {
   meta: string;
   kind: CatalogItemKind;
   isRoad: boolean;
+  pathKind?: CatalogPresetSpec["pathKind"];
+  behaviorHint?: CatalogPresetSpec["behaviorHint"];
+  speed?: number;
+  altitude?: number;
+  wanderStyle?: CatalogPresetSpec["wanderStyle"];
   blueprint?: VoxelBlueprint;
   villagerSpec?: CatalogPresetSpec["villagerSpec"];
 }
@@ -2700,6 +2705,11 @@ export function getSerializedCatalogItems(): SerializedCatalogItem[] {
     meta: preset.meta,
     kind: preset.kind,
     isRoad: preset.kind === "road",
+    ...(preset.pathKind ? { pathKind: preset.pathKind } : {}),
+    ...(preset.behaviorHint ? { behaviorHint: preset.behaviorHint } : {}),
+    ...(typeof preset.speed === "number" ? { speed: preset.speed } : {}),
+    ...(typeof preset.altitude === "number" ? { altitude: preset.altitude } : {}),
+    ...(preset.wanderStyle ? { wanderStyle: preset.wanderStyle } : {}),
     ...(preset.buildBlueprint
       ? { blueprint: preset.buildBlueprint() }
       : preset.buildPreviewBlueprint

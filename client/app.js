@@ -505,6 +505,184 @@ function updateCatalogPickLabel() {
   catalogPickLabel.textContent = `${pendingCatalogPreset.name}${countSuffix} · Clique no mapa para adicionar`;
 }
 
+function placeCatalogPresetLocally(preset, x, z, x2, z2) {
+  const srv = catalogMenu?.getPresetData?.(preset.id);
+  if (!srv) return false;
+
+  if (!worldData || typeof worldData !== "object") {
+    worldData = {
+      version: 1,
+      paths: [],
+      creations: [],
+      villagers: [],
+      myCreationId,
+    };
+  }
+  if (!Array.isArray(worldData.paths)) worldData.paths = [];
+  if (!Array.isArray(worldData.creations)) worldData.creations = [];
+  if (!Array.isArray(worldData.villagers)) worldData.villagers = [];
+
+  const clampCoord = (val) => Math.max(-135, Math.min(135, Number.isFinite(val) ? val : 0));
+  const px = Number(clampCoord(x).toFixed(2));
+  const pz = Number(clampCoord(z).toFixed(2));
+  const now = Date.now();
+  const uid = `${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+  let anchorX = px;
+  let anchorZ = pz;
+  let placedName = srv.name || preset.name;
+
+  if (srv.kind === "road" || preset.isRoad) {
+    const hasSecond =
+      typeof x2 === "number" && Number.isFinite(x2) && typeof z2 === "number" && Number.isFinite(z2);
+    let p0x = px;
+    let p0z = pz;
+    let p1x = px;
+    let p1z = pz;
+    if (hasSecond) {
+      p1x = Number(clampCoord(x2).toFixed(2));
+      p1z = Number(clampCoord(z2).toFixed(2));
+      if (Math.hypot(p1x - p0x, p1z - p0z) < 4) {
+        p1x = Number(clampCoord(p0x + 12).toFixed(2));
+        p1z = Number(clampCoord(p0z + 3).toFixed(2));
+      }
+    } else {
+      p0x = Number(clampCoord(px - 7).toFixed(2));
+      p1x = Number(clampCoord(px + 7).toFixed(2));
+    }
+    const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
+    const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
+    worldData.paths = [
+      ...worldData.paths,
+      {
+        id: `local-road-${uid}`,
+        kind: srv.pathKind || "road",
+        points: [
+          [p0x, p0z],
+          [midX, midZ],
+          [p1x, p1z],
+        ],
+        closed: false,
+      },
+    ];
+    anchorX = hasSecond ? p1x : midX;
+    anchorZ = hasSecond ? p1z : midZ;
+  } else if (srv.kind === "villager" && srv.villagerSpec) {
+    const names = ["Lucas", "Marina", "Gabriel", "Sofia", "Pedro", "Clara", "Mateus", "Beatriz"];
+    const baseName = names[worldData.villagers.length % names.length];
+    placedName = `${baseName} (${srv.name || preset.name})`;
+    const stopOffsets = [
+      [0, 0],
+      [9, 5],
+      [-7, 8],
+      [-6, -7],
+      [7, -6],
+    ];
+    worldData.villagers = [
+      ...worldData.villagers,
+      {
+        id: `local-v-${uid}`,
+        name: placedName,
+        role: srv.villagerSpec.role,
+        hatColor: srv.villagerSpec.hatColor,
+        shirtColor: srv.villagerSpec.shirtColor,
+        homeX: px,
+        homeZ: pz,
+        stops: stopOffsets.map(([dx, dz]) => [
+          Number(clampCoord(px + dx).toFixed(2)),
+          Number(clampCoord(pz + dz).toFixed(2)),
+        ]),
+        usesTransit: Boolean(srv.villagerSpec.usesTransit),
+      },
+    ];
+  } else if (srv.blueprint) {
+    const bp = srv.blueprint;
+    let finalX = px;
+    let finalZ = pz;
+    let behavior = {
+      type: "landmark",
+      facingYaw: 0,
+      activity: "landmark",
+      statusLine: bp.description || srv.description,
+    };
+    if (srv.behaviorHint === "vehicle_route") {
+      const loopR = 9;
+      const wps = [
+        [px, pz],
+        [clampCoord(px + loopR), clampCoord(pz + loopR * 0.4)],
+        [clampCoord(px + loopR * 0.4), clampCoord(pz + loopR)],
+        [clampCoord(px - loopR * 0.5), clampCoord(pz + loopR * 0.5)],
+      ];
+      behavior = {
+        type: "vehicle_route",
+        speed: srv.speed ?? 5.2,
+        waypoints: wps,
+        stops: [],
+        loopMode: "loop",
+        statusLine: bp.description || srv.description,
+      };
+    } else if (srv.behaviorHint === "fly_circle") {
+      behavior = {
+        type: "fly_circle",
+        speed: srv.speed ?? 9.0,
+        altitude: srv.altitude ?? 20,
+        centerX: px,
+        centerZ: pz,
+        radius: 26,
+        statusLine: bp.description || srv.description,
+      };
+      finalX = px + 26;
+    } else if (srv.behaviorHint === "wander") {
+      behavior = {
+        type: "wander",
+        style: srv.wanderStyle || "walk",
+        speed: srv.speed ?? 1.8,
+        homeX: px,
+        homeZ: pz,
+        radius: 10,
+        targets: [
+          [clampCoord(px + 6), clampCoord(pz + 4)],
+          [clampCoord(px - 5), clampCoord(pz + 6)],
+          [clampCoord(px - 6), clampCoord(pz - 5)],
+          [clampCoord(px + 5), clampCoord(pz - 5)],
+        ],
+        statusLine: bp.description || srv.description,
+      };
+    }
+    const creationId = `local-cat-${uid}`;
+    recentLocalCatalogIds.add(creationId);
+    worldData.creations = [
+      ...worldData.creations,
+      {
+        id: creationId,
+        name: bp.name || srv.name,
+        description: bp.description || srv.description,
+        category: bp.category || "prop",
+        scaleClass: bp.scaleClass || "medium",
+        x: finalX,
+        z: finalZ,
+        yaw: 0,
+        blueprint: bp,
+        behavior,
+        integratedLevel: 2,
+        createdAt: now,
+      },
+    ];
+  } else {
+    return false;
+  }
+
+  worldData.version = (worldData.version || 1) + 1;
+  engine.applyWorldSnapshot(worldData);
+  catalogPlacedCount += 1;
+  if (preset.isRoad) {
+    pendingRoadStart = { x: anchorX, z: anchorZ };
+  }
+  const verb = preset.isRoad ? "adicionada" : "adicionado";
+  showToast(`${placedName} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
+  return true;
+}
+
 async function placeCatalogPresetAt(preset, x, z, x2, z2) {
   if (!preset || catalogPlacingInFlight) return;
   catalogPlacingInFlight = true;
@@ -523,6 +701,20 @@ async function placeCatalogPresetAt(preset, x, z, x2, z2) {
         ...(typeof x2 === "number" && typeof z2 === "number" ? { x2, z2 } : {}),
       }),
     });
+    const contentType = res.headers.get("content-type") || "";
+    const isStaticHostFallback =
+      res.status === 404 || res.status === 405 || !contentType.includes("application/json");
+
+    if (isStaticHostFallback) {
+      const placed = placeCatalogPresetLocally(preset, x, z, x2, z2);
+      if (!placed) {
+        showToast("Não foi possível adicionar agora — tente novamente.", 4000);
+      }
+      catalogPlacingInFlight = false;
+      updateCatalogPickLabel();
+      return;
+    }
+
     const data = await res.json();
     if (data?.visitorToken) storeVisitorToken(data.visitorToken);
     if (!res.ok || !data.ok) {
@@ -556,7 +748,9 @@ async function placeCatalogPresetAt(preset, x, z, x2, z2) {
     const verb = preset.isRoad ? "adicionada" : "adicionado";
     showToast(`${data.name || preset.name} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
   } catch {
-    showToast("Erro de conexão ao adicionar — tente novamente.", 4000);
+    if (!placeCatalogPresetLocally(preset, x, z, x2, z2)) {
+      showToast("Erro de conexão ao adicionar — tente novamente.", 4000);
+    }
     catalogPlacingInFlight = false;
     updateCatalogPickLabel();
   }
@@ -1164,7 +1358,8 @@ promptInput.addEventListener("keydown", (e) => {
 async function refreshLiveFeeds() {
   try {
     const res = await fetch("/api/feeds");
-    if (!res.ok) return;
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || !ct.includes("application/json")) return;
     const data = await res.json();
     if (data.ok && data.feeds) {
       engine.applyLiveFeeds(data.feeds);
@@ -1180,7 +1375,8 @@ async function refreshDailyEligibility() {
     const res = await fetch("/api/world", {
       headers: buildVisitorHeaders(),
     });
-    if (!res.ok) return;
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || !ct.includes("application/json")) return;
     const latest = await res.json();
     if (latest?.visitorToken) storeVisitorToken(latest.visitorToken);
     worldData = latest;
@@ -1305,7 +1501,8 @@ async function initWorld() {
     const res = await fetch("/api/world", {
       headers: buildVisitorHeaders(),
     });
-    if (res.ok) {
+    const ct = res.headers.get("content-type") || "";
+    if (res.ok && ct.includes("application/json")) {
       worldData = await res.json();
       if (worldData?.visitorToken) storeVisitorToken(worldData.visitorToken);
       myCreationId = worldData.myCreationId || myCreationId || null;
@@ -1321,6 +1518,9 @@ async function initWorld() {
           syncDockUI();
         }
       }
+    } else if (!isOgCapture) {
+      uiState = "idle";
+      syncDockUI();
     }
   } catch (err) {
     console.error("Failed to fetch initial world:", err);
