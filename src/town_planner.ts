@@ -1313,7 +1313,7 @@ export function decongestWorldTraffic(
   for (const overloaded of report.overloadedCorridors) {
     const movableIds = overloaded.vehicleIds.filter((vid) => {
       const vc = creations.find((x) => x.id === vid);
-      return vc && !vc.isSeed;
+      return vc && !vc.isSeed && !vc.id.startsWith("cat-");
     });
     const excessCount = overloaded.vehicleIds.length - overloaded.capacity;
     for (let i = 0; i < excessCount && i < movableIds.length; i++) {

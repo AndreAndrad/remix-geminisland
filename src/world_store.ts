@@ -15,6 +15,7 @@ import {
   type WorldPatch,
 } from "./argon_director";
 import { sculptWithArgon } from "./argon_sculptor";
+import { getCatalogPreset, type CatalogItemKind } from "./catalog_presets";
 import {
   checkIslandContentPolicy,
   DISALLOWED_CREATION_IDS,
@@ -121,6 +122,30 @@ export interface PlaceCreationInput {
 export type PlaceCreationResult =
   | { ok: true; creation: WorldCreation; world: WorldStateSnapshot }
   | { ok: false; alreadyPlaced?: boolean; myCreationId?: string; error: string };
+
+export interface PlaceCatalogItemInput {
+  presetId: string;
+  cookieId: string;
+  dayKey: string;
+  x: number;
+  z: number;
+  x2?: number | null;
+  z2?: number | null;
+}
+
+export type PlaceCatalogItemResult =
+  | {
+      ok: true;
+      kind: CatalogItemKind;
+      name: string;
+      x: number;
+      z: number;
+      creation?: WorldCreation;
+      path?: WorldPath;
+      villager?: WorldVillager;
+      world: WorldStateSnapshot;
+    }
+  | { ok: false; status: 400 | 404 | 429; error: string };
 
 export interface EnqueueBuildInput {
   ipHash: string;
@@ -534,7 +559,7 @@ export class WorldStore {
       let vehIdx = 0;
 
       for (const c of this.creations) {
-        if (c.behavior?.type !== "vehicle_route") continue;
+        if (c.behavior?.type !== "vehicle_route" || c.id.startsWith("cat-")) continue;
         const myVehSlot = vehIdx++;
         const isPingPong = c.behavior.loopMode === "pingpong";
         const minWps = isPingPong ? 2 : 4;
@@ -1871,6 +1896,345 @@ export class WorldStore {
         ...finalBase,
         myCreationId: creation.id,
       },
+    };
+  }
+
+  public placeCatalogItem(input: PlaceCatalogItemInput): PlaceCatalogItemResult {
+    const preset = getCatalogPreset(input.presetId);
+    if (!preset) {
+      return { ok: false, status: 404, error: "Item do catálogo não encontrado." };
+    }
+
+    const clampCoord = (val: number) => Math.max(-135, Math.min(135, Number.isFinite(val) ? val : 0));
+    const clampToIsland = (rx: number, rz: number): [number, number] => {
+      let cx = clampCoord(rx);
+      let cz = clampCoord(rz);
+      const margin = getIslandInlandMargin(cx, cz);
+      if (margin < 4.5) {
+        const d = Math.hypot(cx, cz) || 1;
+        const pull = Math.min(d, (4.5 - margin) + 2.0);
+        cx -= (cx / d) * pull;
+        cz -= (cz / d) * pull;
+      }
+      return [Number(cx.toFixed(2)), Number(cz.toFixed(2))];
+    };
+
+    const [px, pz] = clampToIsland(input.x, input.z);
+    const now = Date.now();
+
+    if (preset.kind === "road") {
+      if (this.paths.length >= 360) {
+        return { ok: false, status: 429, error: "Limite máximo de estradas na ilha atingido." };
+      }
+      const hasSecond =
+        typeof input.x2 === "number" &&
+        Number.isFinite(input.x2) &&
+        typeof input.z2 === "number" &&
+        Number.isFinite(input.z2);
+
+      let p0x = px;
+      let p0z = pz;
+      let p1x = px;
+      let p1z = pz;
+
+      if (hasSecond) {
+        [p1x, p1z] = clampToIsland(input.x2!, input.z2!);
+        if (Math.hypot(p1x - p0x, p1z - p0z) < 4) {
+          [p1x, p1z] = clampToIsland(p0x + 12, p0z + 3);
+        }
+      } else {
+        // First click immediately builds a clean 14m road segment centered right where the user clicked!
+        const halfLen = 7;
+        [p0x, p0z] = clampToIsland(px - halfLen, pz);
+        [p1x, p1z] = clampToIsland(px + halfLen, pz);
+      }
+
+      const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
+      const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
+      const newPath: WorldPath = {
+        id: `user-road-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 6)}`,
+        kind: preset.pathKind ?? "road",
+        points: [
+          [p0x, p0z],
+          [midX, midZ],
+          [p1x, p1z],
+        ],
+        closed: false,
+      };
+      this.paths.push(newPath);
+      this.version += 1;
+      this.schedulePersist();
+      const snap = this.getWorldSnapshot(input.cookieId, input.dayKey);
+      this.onBroadcast({
+        type: "world_updated",
+        note: `${preset.name} construída na ilha.`,
+        world: { ...this.readBaseWorld(), myCreationId: null },
+      });
+      return {
+        ok: true,
+        kind: "road",
+        name: preset.name,
+        x: hasSecond ? p1x : midX,
+        z: hasSecond ? p1z : midZ,
+        path: newPath,
+        world: snap,
+      };
+    }
+
+    if (preset.kind === "villager" && preset.villagerSpec) {
+      if (this.villagers.length >= 80) {
+        return { ok: false, status: 429, error: "A ilha já está cheia de moradores!" };
+      }
+      const names = [
+        "Lucas",
+        "Marina",
+        "Gabriel",
+        "Sofia",
+        "Pedro",
+        "Clara",
+        "Mateus",
+        "Beatriz",
+        "Rafael",
+        "Helena",
+        "Thiago",
+        "Laura",
+      ];
+      const baseName = names[this.villagers.length % names.length];
+      const stopOffsets: [number, number][] = [
+        [0, 0],
+        [9, 5],
+        [-7, 8],
+        [-6, -7],
+        [7, -6],
+      ];
+      const stops: [number, number][] = stopOffsets.map(([dx, dz]) => clampToIsland(px + dx, pz + dz));
+      const villager: WorldVillager = {
+        id: `v-user-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 5)}`,
+        name: `${baseName} (${preset.name})`,
+        role: preset.villagerSpec.role,
+        hatColor: preset.villagerSpec.hatColor,
+        shirtColor: preset.villagerSpec.shirtColor,
+        homeX: px,
+        homeZ: pz,
+        stops,
+        usesTransit: preset.villagerSpec.usesTransit,
+      };
+      this.villagers.push(villager);
+      this.version += 1;
+      this.schedulePersist();
+      const snap = this.getWorldSnapshot(input.cookieId, input.dayKey);
+      this.onBroadcast({
+        type: "world_updated",
+        note: `${villager.name} chegou à ilha.`,
+        world: { ...this.readBaseWorld(), myCreationId: null },
+      });
+      return {
+        ok: true,
+        kind: "villager",
+        name: villager.name,
+        x: px,
+        z: pz,
+        villager,
+        world: snap,
+      };
+    }
+
+    if (!preset.buildBlueprint) {
+      return { ok: false, status: 400, error: "Modelo indisponível no momento." };
+    }
+    if (this.creations.length >= 420) {
+      return { ok: false, status: 429, error: "A ilha atingiu o limite máximo de construções." };
+    }
+
+    const bp = preset.buildBlueprint();
+    const newRadius = getCreationFootprintRadius(
+      bp.scaleClass,
+      bp.stats.footprintX,
+      bp.stats.footprintZ,
+    );
+    const worldBefore = this.readBaseWorld();
+    const [x, z] = this.chooseMeadowSpot(
+      px,
+      pz,
+      bp.category,
+      newRadius,
+      worldBefore,
+      undefined,
+      bp.scaleClass,
+      `${bp.name} ${bp.description}`,
+    );
+
+    const id = `cat-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 6)}`;
+    let behavior: WorldCreation["behavior"] = {
+      type: "landmark",
+      facingYaw: 0,
+      activity: "landmark",
+      statusLine: bp.description,
+    };
+    let finalX = x;
+    let finalZ = z;
+    let yaw = 0;
+
+    if (preset.behaviorHint === "vehicle_route") {
+      // Find the nearest road within 16m of where the user clicked; otherwise spawn right where clicked!
+      let nearestRoad: WorldPath | null = null;
+      let nearestDist = Infinity;
+      let nearestPtIdx = 0;
+      for (const p of this.paths) {
+        if (!Array.isArray(p.points) || p.points.length < 2) continue;
+        if (p.kind !== "road" && p.kind !== "cobblestone" && p.kind !== "cottage_road" && p.kind !== "dirt_trail") {
+          continue;
+        }
+        const curve = sampleCatmullRom2D(p.points, Boolean(p.closed), 1.0);
+        const hit = distPointToPolyline2D(px, pz, curve);
+        if (hit.dist < nearestDist) {
+          nearestDist = hit.dist;
+          nearestRoad = p;
+          let bestIdx = 0;
+          let bestD = Infinity;
+          for (let i = 0; i < p.points.length; i++) {
+            const d = Math.hypot(p.points[i][0] - px, p.points[i][1] - pz);
+            if (d < bestD) {
+              bestD = d;
+              bestIdx = i;
+            }
+          }
+          nearestPtIdx = bestIdx;
+        }
+      }
+
+      if (nearestRoad && nearestDist <= 16) {
+        const isClosed = Boolean(nearestRoad.closed) && nearestRoad.points.length >= 4;
+        const basePts = nearestRoad.points;
+        const wps: [number, number][] = isClosed
+          ? basePts.map((_, idx) => {
+              const pt = basePts[(idx + nearestPtIdx) % basePts.length];
+              return [pt[0], pt[1]];
+            })
+          : nearestPtIdx > basePts.length / 2
+            ? [...basePts].reverse().map(([wx, wz]) => [wx, wz])
+            : basePts.map(([wx, wz]) => [wx, wz]);
+        finalX = wps[0][0];
+        finalZ = wps[0][1];
+        behavior = {
+          type: "vehicle_route",
+          speed: preset.speed ?? 5.2,
+          waypoints: wps,
+          stops: [],
+          loopMode: isClosed ? "loop" : "pingpong",
+          statusLine: bp.description,
+        };
+      } else {
+        // Spawn right at the clicked spot driving a smooth local loop around (px, pz)
+        const loopR = 9;
+        const wps: [number, number][] = [
+          clampToIsland(px, pz),
+          clampToIsland(px + loopR, pz + loopR * 0.4),
+          clampToIsland(px + loopR * 0.4, pz + loopR),
+          clampToIsland(px - loopR * 0.5, pz + loopR * 0.5),
+        ];
+        finalX = wps[0][0];
+        finalZ = wps[0][1];
+        behavior = {
+          type: "vehicle_route",
+          speed: preset.speed ?? 5.2,
+          waypoints: wps,
+          stops: [],
+          loopMode: "loop",
+          statusLine: bp.description,
+        };
+      }
+    } else if (preset.behaviorHint === "fly_circle") {
+      behavior = {
+        type: "fly_circle",
+        speed: preset.speed ?? 9.0,
+        altitude: preset.altitude ?? 20,
+        centerX: px,
+        centerZ: pz,
+        radius: 26,
+        statusLine: bp.description,
+      };
+      finalX = px + 26;
+      finalZ = pz;
+    } else if (preset.behaviorHint === "wander") {
+      const rawTargets: [number, number][] = [
+        clampToIsland(x + 6, z + 4),
+        clampToIsland(x - 5, z + 6),
+        clampToIsland(x - 6, z - 5),
+        clampToIsland(x + 5, z - 5),
+      ];
+      behavior = {
+        type: "wander",
+        style: preset.wanderStyle ?? "walk",
+        speed: preset.speed ?? 1.8,
+        homeX: x,
+        homeZ: z,
+        radius: 10,
+        targets: rawTargets,
+        statusLine: bp.description,
+      };
+    } else {
+      const draft: WorldCreation = {
+        id,
+        name: bp.name,
+        description: bp.description,
+        category: bp.category,
+        scaleClass: bp.scaleClass,
+        x,
+        z,
+        yaw: 0,
+        blueprint: bp,
+        behavior,
+        integratedLevel: 2,
+        createdAt: now,
+      };
+      const smartYaw = computeIntelligentBuildingYaw(draft, worldBefore.paths);
+      yaw = smartYaw !== null ? smartYaw : 0;
+      behavior = {
+        type: "landmark",
+        facingYaw: yaw,
+        activity: "landmark",
+        statusLine: bp.description,
+      };
+    }
+
+    const creation: WorldCreation = {
+      id,
+      name: bp.name,
+      description: bp.description,
+      category: bp.category,
+      scaleClass: bp.scaleClass,
+      x: finalX,
+      z: finalZ,
+      yaw,
+      blueprint: bp,
+      behavior,
+      integratedLevel: 2,
+      createdAt: now,
+    };
+
+    this.creations.push(creation);
+    this.auditAndRepairWorld();
+    this.version += 1;
+    this.schedulePersist();
+
+    const updatedCreation = this.creations.find((c) => c.id === id) ?? creation;
+    const snap = this.getWorldSnapshot(input.cookieId, input.dayKey);
+
+    this.onBroadcast({
+      type: "creation_placed",
+      creation: updatedCreation,
+      world: { ...this.readBaseWorld(), myCreationId: null },
+    });
+
+    return {
+      ok: true,
+      kind: "creation",
+      name: updatedCreation.name,
+      x: updatedCreation.x,
+      z: updatedCreation.z,
+      creation: updatedCreation,
+      world: snap,
     };
   }
 

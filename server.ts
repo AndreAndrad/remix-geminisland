@@ -4,6 +4,7 @@ import path from "node:path";
 import stream from "node:stream";
 import url from "node:url";
 import { createServer as createViteServer } from "vite";
+import { getSerializedCatalogItems } from "./src/catalog_presets";
 import { checkIslandContentPolicy } from "./src/content_policy";
 import { type AppEnv, resolveRuntimeEnv } from "./src/env_types";
 import { resolveWorldLiveFeeds } from "./src/live_feeds";
@@ -75,6 +76,24 @@ function allowTrafficIncidentReport(ipHash: string): boolean {
     return true;
   }
   if (cur.count >= 24) return false;
+  cur.count++;
+  return true;
+}
+
+const catalogPlaceBuckets = new Map<string, { windowStart: number; count: number }>();
+function allowCatalogPlacement(ipHash: string): boolean {
+  const now = Date.now();
+  if (catalogPlaceBuckets.size > 1024) {
+    for (const [k, b] of catalogPlaceBuckets.entries()) {
+      if (now - b.windowStart > 60_000) catalogPlaceBuckets.delete(k);
+    }
+  }
+  const cur = catalogPlaceBuckets.get(ipHash);
+  if (!cur || now - cur.windowStart > 60_000) {
+    catalogPlaceBuckets.set(ipHash, { windowStart: now, count: 1 });
+    return true;
+  }
+  if (cur.count >= 120) return false;
   cur.count++;
   return true;
 }
@@ -261,6 +280,18 @@ export async function startServer(customPort?: number) {
           },
           200,
           id.setCookieHeader ? { "Set-Cookie": id.setCookieHeader } : undefined,
+        );
+      }
+
+      if (url.pathname === "/api/catalog") {
+        if (request.method !== "GET") {
+          return jsonResponse(request, { ok: false, error: "Method not allowed." }, 405);
+        }
+        return jsonResponse(
+          request,
+          { ok: true, items: getSerializedCatalogItems() },
+          200,
+          { "cache-control": "public, max-age=60" },
         );
       }
 
@@ -467,6 +498,70 @@ export async function startServer(customPort?: number) {
             ok: true,
             queued: true,
             job: enqueued.job,
+            visitorToken: id.visitorToken,
+          },
+          200,
+          cookieHeaders,
+        );
+      }
+
+      if (url.pathname === "/api/catalog-place") {
+        if (request.method !== "POST") {
+          return jsonResponse(request, { ok: false, error: "Method not allowed." }, 405);
+        }
+        const csrfErr = verifyMutationSecurity(request);
+        if (csrfErr) {
+          return jsonResponse(request, { ok: false, error: csrfErr }, 403);
+        }
+        const id = await resolveVisitorIdentity(request, env);
+        const cookieHeaders = id.setCookieHeader ? { "Set-Cookie": id.setCookieHeader } : undefined;
+        if (!allowCatalogPlacement(id.ipHash)) {
+          return jsonResponse(
+            request,
+            { ok: false, error: "Muitas construções seguidas — aguarde alguns segundos." },
+            429,
+            cookieHeaders,
+          );
+        }
+        const parsedBody = await readBoundedJsonBody(request, 8_192);
+        if (!parsedBody.ok) {
+          return jsonResponse(request, { ok: false, error: parsedBody.error }, parsedBody.status, cookieHeaders);
+        }
+        const body = parsedBody.data;
+        const presetId = sanitizePlainText(body.presetId, 64, true);
+        const x = typeof body.x === "number" && Number.isFinite(body.x) ? body.x : null;
+        const z = typeof body.z === "number" && Number.isFinite(body.z) ? body.z : null;
+        const x2 = typeof body.x2 === "number" && Number.isFinite(body.x2) ? body.x2 : null;
+        const z2 = typeof body.z2 === "number" && Number.isFinite(body.z2) ? body.z2 : null;
+        if (!presetId || x === null || z === null) {
+          return jsonResponse(
+            request,
+            { ok: false, error: "Escolha um item e um ponto na ilha." },
+            400,
+            cookieHeaders,
+          );
+        }
+        const result = worldStore.placeCatalogItem({
+          presetId,
+          cookieId: id.cookieId,
+          dayKey: id.dayKey,
+          x,
+          z,
+          x2,
+          z2,
+        });
+        if (!result.ok) {
+          return jsonResponse(
+            request,
+            { ok: false, error: result.error },
+            result.status,
+            cookieHeaders,
+          );
+        }
+        return jsonResponse(
+          request,
+          {
+            ...result,
             visitorToken: id.visitorToken,
           },
           200,

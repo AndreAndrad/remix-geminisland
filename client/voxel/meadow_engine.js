@@ -6101,7 +6101,8 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
     pointerGesture.lastX = e.clientX;
     pointerGesture.lastY = e.clientY;
 
-    if (Math.hypot(e.clientX - pointerGesture.startX, e.clientY - pointerGesture.startY) > 4.5) {
+    const dragThresh = spotState.mode === "picking" ? 8.5 : 4.5;
+    if (Math.hypot(e.clientX - pointerGesture.startX, e.clientY - pointerGesture.startY) > dragThresh) {
       pointerGesture.moved = true;
       clearInteractiveHover();
     }
@@ -6239,7 +6240,7 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
             spotState.x = sx;
             spotState.z = sz;
             plotMarker.group.position.set(sx, 0, sz);
-            callbacks.onPickGroundSpot?.(sx, sz);
+            callbacks.onPickGroundSpot?.(sx, sz, g[0], g[1]);
           }
           return;
         }

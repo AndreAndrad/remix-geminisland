@@ -1,5 +1,6 @@
 import { createMeadowWorldEngine } from "./voxel/meadow_engine.js";
 import { createCharacterBuilderController } from "./character_builder.js";
+import { createCatalogMenuController } from "./catalog_menu.js";
 import { createMultiplayerClient } from "./multiplayer_client.js";
 
 const urlParams = new URLSearchParams(location.search);
@@ -13,6 +14,10 @@ const worldCanvas = document.getElementById("world-canvas");
 const addBtn = document.getElementById("add-btn");
 const pickSpotPill = document.getElementById("pick-spot-pill");
 const cancelPickBtn = document.getElementById("cancel-pick-btn");
+const catalogPickPill = document.getElementById("catalog-pick-pill");
+const catalogPickLabel = document.getElementById("catalog-pick-label");
+const catalogSwitchBtn = document.getElementById("catalog-switch-btn");
+const catalogCancelBtn = document.getElementById("catalog-cancel-btn");
 
 const bottomBuilder = document.getElementById("bottom-builder");
 const moveSpotBtn = document.getElementById("move-spot-btn");
@@ -49,6 +54,7 @@ const recenterBtn = document.getElementById("recenter-btn");
 const recenterCompass = document.getElementById("recenter-compass");
 const avatarBtn = document.getElementById("avatar-btn");
 const avatarSwatchDot = document.getElementById("avatar-swatch-dot");
+const menuBtn = document.getElementById("menu-btn");
 const onlinePill = document.getElementById("online-pill");
 const onlineCountEl = document.getElementById("online-count");
 const interactPromptBtn = document.getElementById("interact-prompt");
@@ -56,6 +62,7 @@ const interactKeyEl = document.getElementById("interact-key");
 const interactLabelEl = document.getElementById("interact-label");
 const walkEscHintBtn = document.getElementById("walk-esc-hint");
 const avatarDialog = document.getElementById("avatar-dialog");
+const catalogDialog = document.getElementById("catalog-dialog");
 
 const walkJoystick = document.getElementById("walk-joystick");
 const walkJoystickKnob = document.getElementById("walk-joystick-knob");
@@ -64,7 +71,7 @@ const walkJoyDown = document.getElementById("walk-joy-down");
 const walkJoyLeft = document.getElementById("walk-joy-left");
 const walkJoyRight = document.getElementById("walk-joy-right");
 
-// UI states: "idle" | "picking" | "composing" | "building" | "ready" | "placed"
+// UI states: "idle" | "picking" | "catalog_picking" | "composing" | "building" | "ready" | "placed"
 let uiState = "idle";
 let myCreationId = null;
 let readyCreation = null;
@@ -72,6 +79,11 @@ let worldData = null;
 let selectedImageDataUrl = null;
 let chosenSpot = null;
 let toastTimer = null;
+let pendingCatalogPreset = null;
+let pendingRoadStart = null;
+let catalogPlacingInFlight = false;
+let catalogPlacedCount = 0;
+const recentLocalCatalogIds = new Set();
 
 // Live multi-user build queue state
 let activeJob = null;
@@ -163,9 +175,11 @@ function stopJobTracking() {
 
 let engine = null;
 let characterBuilder = null;
+let catalogMenu = null;
 let mpClient = null;
 let activeInteractionPrompt = null;
 let lastAvatarDialogCloseMs = -1000;
+let lastCatalogDialogCloseMs = -1000;
 let currentCamMode = "pan";
 let sawTouchInput = false;
 let joyPointerId = null;
@@ -299,6 +313,7 @@ engine = createMeadowWorldEngine(
       if (
         !creation ||
         uiState === "picking" ||
+        uiState === "catalog_picking" ||
         isOgCapture ||
         (activeInteractionPrompt && engine?.isFirstPerson?.())
       ) {
@@ -331,7 +346,35 @@ engine = createMeadowWorldEngine(
       if (!message || isOgCapture) return;
       showToast(message);
     },
-    onPickGroundSpot(x, z) {
+    onPickGroundSpot(x, z, rawX, rawZ) {
+      if (uiState === "catalog_picking" && pendingCatalogPreset) {
+        if (catalogPlacingInFlight) return;
+        const rx = typeof rawX === "number" && Number.isFinite(rawX) ? rawX : x;
+        const rz = typeof rawZ === "number" && Number.isFinite(rawZ) ? rawZ : z;
+        if (pendingCatalogPreset.isRoad) {
+          // First click immediately lays a road right where clicked; subsequent clicks within 60m extend & connect it!
+          const canConnect =
+            pendingRoadStart &&
+            Math.hypot(rx - pendingRoadStart.x, rz - pendingRoadStart.z) >= 3 &&
+            Math.hypot(rx - pendingRoadStart.x, rz - pendingRoadStart.z) <= 60;
+          if (canConnect) {
+            void placeCatalogPresetAt(
+              pendingCatalogPreset,
+              pendingRoadStart.x,
+              pendingRoadStart.z,
+              rx,
+              rz,
+            );
+          } else {
+            void placeCatalogPresetAt(pendingCatalogPreset, rx, rz, null, null);
+          }
+          return;
+        }
+        const px = pendingCatalogPreset.useRawSpot ? rx : x;
+        const pz = pendingCatalogPreset.useRawSpot ? rz : z;
+        void placeCatalogPresetAt(pendingCatalogPreset, px, pz, null, null);
+        return;
+      }
       chosenSpot = { x, z };
       uiState = "composing";
       syncDockUI();
@@ -380,10 +423,13 @@ engine = createMeadowWorldEngine(
     onInteriorChange(roomInfo) {
       if (roomInfo) {
         document.body.dataset.inInterior = "1";
-        if (uiState === "picking" || uiState === "composing") {
+        if (uiState === "picking" || uiState === "catalog_picking" || uiState === "composing") {
           hideError();
           chosenSpot = null;
-          uiState = "idle";
+          pendingCatalogPreset = null;
+          pendingRoadStart = null;
+          catalogPlacedCount = 0;
+          uiState = myCreationId ? "placed" : "idle";
           syncDockUI();
         }
       } else {
@@ -443,6 +489,125 @@ avatarBtn?.addEventListener("click", () => {
   characterBuilder?.open(engine?.getLocalAppearance?.());
 });
 
+function updateCatalogPickLabel() {
+  if (!catalogPickLabel || !pendingCatalogPreset) return;
+  if (catalogPlacingInFlight) {
+    catalogPickLabel.textContent = `Adicionando ${pendingCatalogPreset.name}…`;
+    return;
+  }
+  const countSuffix = catalogPlacedCount > 0 ? ` (${catalogPlacedCount})` : "";
+  if (pendingCatalogPreset.isRoad) {
+    catalogPickLabel.textContent = pendingRoadStart
+      ? `${pendingCatalogPreset.name}${countSuffix} · Clique para continuar a pista`
+      : `${pendingCatalogPreset.name} · Clique no mapa para adicionar`;
+    return;
+  }
+  catalogPickLabel.textContent = `${pendingCatalogPreset.name}${countSuffix} · Clique no mapa para adicionar`;
+}
+
+async function placeCatalogPresetAt(preset, x, z, x2, z2) {
+  if (!preset || catalogPlacingInFlight) return;
+  catalogPlacingInFlight = true;
+  updateCatalogPickLabel();
+  try {
+    const res = await fetch("/api/catalog-place", {
+      method: "POST",
+      headers: buildVisitorHeaders({
+        "content-type": "application/json",
+        "x-meadow-client": "1",
+      }),
+      body: JSON.stringify({
+        presetId: preset.id,
+        x,
+        z,
+        ...(typeof x2 === "number" && typeof z2 === "number" ? { x2, z2 } : {}),
+      }),
+    });
+    const data = await res.json();
+    if (data?.visitorToken) storeVisitorToken(data.visitorToken);
+    if (!res.ok || !data.ok) {
+      showToast(data?.error || "Não foi possível adicionar agora — tente novamente.", 4000);
+      catalogPlacingInFlight = false;
+      updateCatalogPickLabel();
+      return;
+    }
+
+    if (data.creation?.id) {
+      recentLocalCatalogIds.add(data.creation.id);
+      setTimeout(() => recentLocalCatalogIds.delete(data.creation.id), 15_000);
+    }
+
+    if (data.world) {
+      worldData = {
+        ...data.world,
+        myCreationId: data.world.myCreationId || myCreationId,
+      };
+      engine.applyWorldSnapshot(worldData);
+    }
+
+    // Keep continuous placement mode active so the user can keep clicking to add more!
+    catalogPlacedCount += 1;
+    if (preset.isRoad && typeof data.x === "number" && typeof data.z === "number") {
+      pendingRoadStart = { x: data.x, z: data.z };
+    }
+    catalogPlacingInFlight = false;
+    updateCatalogPickLabel();
+
+    const verb = preset.isRoad ? "adicionada" : "adicionado";
+    showToast(`${data.name || preset.name} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
+  } catch {
+    showToast("Erro de conexão ao adicionar — tente novamente.", 4000);
+    catalogPlacingInFlight = false;
+    updateCatalogPickLabel();
+  }
+}
+
+catalogMenu = createCatalogMenuController({
+  dialogEl: catalogDialog,
+  onSelectPreset(preset) {
+    if (!preset) return;
+    hoverCard.hidden = true;
+    if (engine.isFirstPerson()) {
+      engine.setDragMode("pan");
+    }
+    pendingCatalogPreset = preset;
+    pendingRoadStart = null;
+    catalogPlacedCount = 0;
+    catalogPlacingInFlight = false;
+    engine.setPreviewPrompt(preset.previewHint || preset.name);
+    uiState = "catalog_picking";
+    syncDockUI();
+  },
+});
+
+catalogDialog?.addEventListener("close", () => {
+  lastCatalogDialogCloseMs = performance.now();
+  menuBtn?.blur();
+  queueMicrotask(() => menuBtn?.blur());
+});
+
+menuBtn?.addEventListener("click", () => {
+  if (isOgCapture) return;
+  menuBtn?.blur();
+  hoverCard.hidden = true;
+  resetWalkJoystick();
+  engine?.releaseWalkPointerLock?.();
+  catalogMenu?.open(pendingCatalogPreset?.categoryId, pendingCatalogPreset?.id);
+});
+
+catalogSwitchBtn?.addEventListener("click", () => {
+  catalogMenu?.open(pendingCatalogPreset?.categoryId, pendingCatalogPreset?.id);
+});
+
+catalogCancelBtn?.addEventListener("click", () => {
+  pendingCatalogPreset = null;
+  pendingRoadStart = null;
+  catalogPlacedCount = 0;
+  catalogPlacingInFlight = false;
+  uiState = myCreationId ? "placed" : "idle";
+  syncDockUI();
+});
+
 walkEscHintBtn?.addEventListener("click", () => {
   hoverCard.hidden = true;
   engine?.setDragMode("pan");
@@ -450,6 +615,7 @@ walkEscHintBtn?.addEventListener("click", () => {
 });
 
 window.__geminIslandCharacterBuilder = characterBuilder;
+window.__geminIslandCatalogMenu = catalogMenu;
 
 camPanBtn?.addEventListener("click", () => {
   engine.setDragMode("pan");
@@ -465,10 +631,13 @@ camWalkBtn?.addEventListener("click", () => {
     engine.setDragMode("pan");
     return;
   }
-  if (uiState === "picking" || uiState === "composing") {
+  if (uiState === "picking" || uiState === "catalog_picking" || uiState === "composing") {
     hideError();
     chosenSpot = null;
-    uiState = "idle";
+    pendingCatalogPreset = null;
+    pendingRoadStart = null;
+    catalogPlacedCount = 0;
+    uiState = myCreationId ? "placed" : "idle";
     syncDockUI();
   }
   engine.setDragMode("walk");
@@ -581,12 +750,13 @@ function syncDockUI() {
 
   addBtn.hidden = true;
   pickSpotPill.hidden = true;
+  if (catalogPickPill) catalogPickPill.hidden = true;
   bottomBuilder.hidden = true;
   buildingPill.hidden = true;
   readyGotoBtn.hidden = true;
   locateMineBtn.hidden = true;
 
-  if (myCreationId && uiState !== "ready") {
+  if (myCreationId && uiState !== "ready" && uiState !== "catalog_picking") {
     uiState = "placed";
   }
 
@@ -597,6 +767,11 @@ function syncDockUI() {
         mode: "picking",
         ...(chosenSpot ? { x: chosenSpot.x, z: chosenSpot.z } : {}),
       });
+      break;
+    case "catalog_picking":
+      if (catalogPickPill) catalogPickPill.hidden = false;
+      updateCatalogPickLabel();
+      engine.setSpotPickerState({ mode: "picking" });
       break;
     case "composing":
       bottomBuilder.hidden = false;
@@ -748,17 +923,25 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (
       characterBuilder?.isOpen?.() ||
+      catalogMenu?.isOpen?.() ||
       (avatarDialog &&
         (avatarDialog.open || (e.target instanceof Node && avatarDialog.contains(e.target)))) ||
-      performance.now() - lastAvatarDialogCloseMs < 80
+      (catalogDialog &&
+        (catalogDialog.open || (e.target instanceof Node && catalogDialog.contains(e.target)))) ||
+      performance.now() - lastAvatarDialogCloseMs < 80 ||
+      performance.now() - lastCatalogDialogCloseMs < 80
     ) {
       return;
     }
-    if (uiState === "picking" || uiState === "composing") {
+    if (uiState === "picking" || uiState === "catalog_picking" || uiState === "composing") {
       e.preventDefault();
       hideError();
       chosenSpot = null;
-      uiState = "idle";
+      pendingCatalogPreset = null;
+      pendingRoadStart = null;
+      catalogPlacedCount = 0;
+      catalogPlacingInFlight = false;
+      uiState = myCreationId ? "placed" : "idle";
       syncDockUI();
     } else if (engine.isFirstPerson()) {
       e.preventDefault();
@@ -1067,6 +1250,7 @@ function handleWorldMessage(msg) {
       msg.type === "creation_placed" &&
       msg.creation &&
       msg.creation.id !== myCreationId &&
+      !recentLocalCatalogIds.has(msg.creation.id) &&
       uiState !== "building"
     ) {
       showToast(`Someone added "${msg.creation.name}" to GeminIsland!`, 4200);
@@ -1144,6 +1328,7 @@ async function initWorld() {
 
   refreshLiveFeeds();
   if (!isOgCapture) {
+    catalogMenu?.preload?.();
     setInterval(refreshLiveFeeds, 90_000);
     setInterval(refreshDailyEligibility, 10 * 60_000);
   }

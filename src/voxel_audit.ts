@@ -1509,7 +1509,7 @@ export function auditAndRepairWorldSpatial(
   for (const p of paths) {
     if (!Array.isArray(p.points) || p.points.length < 2) continue;
 
-    if (SEED_PATH_IDS.has(p.id)) {
+    if (SEED_PATH_IDS.has(p.id) || p.id.startsWith("user-road-")) {
       if (p.id === "path-green-walk" && p.kind === "dirt_trail") {
         footpathTrimCount++;
         details.push(`refined central "path-green-walk" to garden stepping stones`);
@@ -2015,7 +2015,7 @@ export function auditAndRepairWorldSpatial(
   };
 
   for (const rawPath of candidatePool) {
-    if (SEED_PATH_IDS.has(rawPath.id)) {
+    if (SEED_PATH_IDS.has(rawPath.id) || rawPath.id.startsWith("user-road-")) {
       const curve = sampleCatmullRom2D(rawPath.points, Boolean(rawPath.closed), 0.65);
       accepted.push({ path: rawPath, curve, isRoad: rawPath.kind === "road" });
       continue;

@@ -6,7 +6,7 @@ const ALLOWED_STATIC_ORIGINS = new Set([
 ]);
 
 const EXACT_CLOUD_RUN_HOST_RE =
-  /^(?:[a-z0-9-]+-853813963450|ais-(?:dev|pre)-[a-z0-9-]+-73428471351)\.[a-z0-9-]+\.run\.app$/;
+  /^(?:[a-z0-9-]+-(?:853813963450|122300436907)|ais-(?:dev|pre)-[a-z0-9-]+-[0-9]+)\.[a-z0-9-]+\.run\.app$/;
 
 const SECRET_PATTERNS: RegExp[] = [
   /AIza[0-9A-Za-z_-]{16,}/g,
@@ -111,17 +111,44 @@ export function safeLogWarn(
   );
 }
 
-export function isAllowedAppletOrigin(origin: string): boolean {
+export function isAllowedAppletOrigin(origin: string, request?: Request): boolean {
   if (!origin || origin === "null") {
     return false;
   }
   if (ALLOWED_STATIC_ORIGINS.has(origin)) return true;
   try {
     const parsed = new URL(origin);
+    const hostname = parsed.hostname.toLowerCase();
+    const originHost = parsed.host.toLowerCase();
+
+    if (request) {
+      const forwardedHost = (request.headers.get("x-forwarded-host") || "")
+        .split(",")[0]
+        .trim()
+        .toLowerCase();
+      const rawHost = (request.headers.get("host") || "").trim().toLowerCase();
+      let reqUrlHost = "";
+      try {
+        reqUrlHost = new URL(request.url).host.toLowerCase();
+      } catch {
+        reqUrlHost = "";
+      }
+      if (
+        (parsed.protocol === "https:" || hostname === "localhost" || hostname === "127.0.0.1") &&
+        ((forwardedHost && originHost === forwardedHost) ||
+          (rawHost && originHost === rawHost) ||
+          (reqUrlHost && originHost === reqUrlHost))
+      ) {
+        return true;
+      }
+    }
+
+    if (parsed.protocol === "http:" && (hostname === "localhost" || hostname === "127.0.0.1")) {
+      return true;
+    }
     if (parsed.protocol !== "https:") {
       return false;
     }
-    const hostname = parsed.hostname.toLowerCase();
     if (
       hostname === "ai.studio" ||
       hostname.endsWith(".ai.studio") ||
@@ -142,7 +169,7 @@ export function isAllowedAppletOrigin(origin: string): boolean {
 export function verifyMutationSecurity(request: Request): string | null {
   const origin = request.headers.get("Origin");
   if (origin !== null) {
-    if (!isAllowedAppletOrigin(origin)) {
+    if (!isAllowedAppletOrigin(origin, request)) {
       return "Invalid request origin.";
     }
   } else {
@@ -170,7 +197,7 @@ export function verifyMutationSecurity(request: Request): string | null {
 export function verifyWebSocketOrigin(request: Request): string | null {
   const origin = request.headers.get("Origin");
   if (origin !== null) {
-    if (!isAllowedAppletOrigin(origin)) {
+    if (!isAllowedAppletOrigin(origin, request)) {
       return "Disallowed WebSocket Origin.";
     }
     return null;

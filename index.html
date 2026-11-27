@@ -123,6 +123,22 @@
         <span>Character</span>
       </button>
 
+      <button
+        type="button"
+        id="menu-btn"
+        class="cam-recenter-btn cam-menu-btn"
+        aria-label="Abrir menu de construção"
+        title="Menu de construção"
+      >
+        <svg class="cam-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+        </svg>
+        <span>Menu</span>
+      </button>
+
       <div id="online-pill" class="online-pill" title="Players online" hidden>
         <span class="live-dot" aria-hidden="true"></span>
         <span id="online-count">1</span>
@@ -176,6 +192,15 @@
       <div id="pick-spot-pill" class="dock-pill dock-pill-pick" hidden>
         <span>Click where to add</span>
         <button type="button" id="cancel-pick-btn" class="icon-close-btn" aria-label="Cancel spot selection">
+          &times;
+        </button>
+      </div>
+
+      <!-- 2b. Catalog spot-picking prompt pill -->
+      <div id="catalog-pick-pill" class="dock-pill dock-pill-pick dock-pill-catalog" hidden>
+        <span id="catalog-pick-label" class="catalog-pick-label">Clique no mapa para adicionar</span>
+        <button type="button" id="catalog-switch-btn" class="spot-chip-btn">Trocar</button>
+        <button type="button" id="catalog-cancel-btn" class="icon-close-btn" aria-label="Concluir posicionamento" title="Concluir">
           &times;
         </button>
       </div>
@@ -249,6 +274,7 @@
     </div>
 
     <dialog id="avatar-dialog" class="avatar-dialog" closedby="any" aria-label="Character customizer"></dialog>
+    <dialog id="catalog-dialog" class="catalog-dialog" closedby="any" aria-label="Menu de construção"></dialog>
 
     <script type="module" src="/client/app.js"></script>
   </body>
