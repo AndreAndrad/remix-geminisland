@@ -11,7 +11,10 @@ export type CatalogCategoryId =
   | "predio"
   | "casa"
   | "carro"
+  | "maquinas"
   | "estradas"
+  | "agua"
+  | "barcos"
   | "fazendas"
   | "plantacoes"
   | "animais"
@@ -21,7 +24,7 @@ export type CatalogCategoryId =
   | "moto"
   | "pessoas";
 
-export type CatalogItemKind = "creation" | "road" | "villager";
+export type CatalogItemKind = "creation" | "road" | "villager" | "pond";
 
 export interface CatalogPresetSpec {
   id: string;
@@ -31,13 +34,14 @@ export interface CatalogPresetSpec {
   meta: string;
   kind: CatalogItemKind;
   pathKind?: PathKind;
+  pondRadius?: number;
   villagerSpec?: {
     role: WorldVillager["role"];
     hatColor: string;
     shirtColor: string;
     usesTransit: boolean;
   };
-  behaviorHint?: "landmark" | "vehicle_route" | "wander" | "fly_circle";
+  behaviorHint?: "landmark" | "vehicle_route" | "wander" | "fly_circle" | "water_float";
   wanderStyle?: "walk" | "hop" | "trot" | "glide";
   speed?: number;
   altitude?: number;
@@ -74,54 +78,71 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
     id: "predio-residencial",
     categoryId: "predio",
     name: "Edifício Residencial",
-    description: "Prédio de apartamentos com varandas, janelas iluminadas e terraço.",
-    meta: "Construção · Grande",
+    description: "Prédio moderno com varandas arborizadas, janelas iluminadas e terraço com pergolado.",
+    meta: "Prédio · Grande",
     kind: "creation",
     behaviorHint: "landmark",
     buildBlueprint: () =>
       makeBlueprint({
         name: "Edifício Residencial",
-        description: "Prédio de apartamentos com varandas, janelas iluminadas e terraço arborizado.",
+        description: "Prédio residencial contemporâneo com varandas com jardim, hall iluminado e terraço panorâmico.",
         category: "building",
         scaleClass: "large",
         palette: {
-          facade: "#e9e2d4",
-          facadeShade: "#d4cab8",
-          brick: "#c87454",
-          slate: "#434b59",
-          balcony: "#8c97a4",
-          glass: "#9bd3ea",
-          warmGlow: "#ffe39c",
-          door: "#6f492d",
-          leaf: "#58ad52",
+          facade: "#f2ece1",
+          facadeShade: "#d9cfbe",
+          brick: "#b86b4c",
+          slate: "#37414f",
+          wood: "#b87e48",
+          balcony: "#8c9aa8",
+          glass: "#8dd2eb",
+          warmGlow: "#ffe59e",
+          door: "#5e3d24",
+          leaf: "#49a84a",
+          leafLight: "#76d166",
+          flower: "#f27fa0",
           steel: "#a7b4c2",
         },
         ops: [
-          { op: "hollowBox", x0: -8, y0: 0, z0: -7, x1: 8, y1: 6, z1: 7, wall: 1, color: "brick", trim: "facadeShade" },
-          { op: "box", x0: -2, y0: 0, z0: 6, x1: 2, y1: 4, z1: 7, color: "door" },
-          { op: "box", x0: -4, y0: 4, z0: 7, x1: 4, y1: 5, z1: 9, color: "slate" },
+          // Travertine stone podium & warm lit lobby
+          { op: "box", x0: -9, y0: 0, z0: -8, x1: 9, y1: 1, z1: 9, color: "facadeShade" },
+          { op: "hollowBox", x0: -8, y0: 1, z0: -7, x1: 8, y1: 6, z1: 7, wall: 1, color: "brick", trim: "facadeShade" },
+          { op: "box", x0: -4, y0: 1, z0: 6, x1: 4, y1: 5, z1: 7, color: "warmGlow", emit: 1.0 },
+          { op: "box", x0: -1, y0: 1, z0: 6, x1: 1, y1: 4, z1: 7, color: "door" },
+          { op: "box", x0: -5, y0: 5, z0: 7, x1: 5, y1: 6, z1: 9, color: "slate" },
+          { op: "box", x0: 6, y0: 1, z0: 7, x1: 8, y1: 3, z1: 9, color: "leaf", mirrorX: true },
+          { op: "box", x0: 6, y0: 3, z0: 7, x1: 7, y1: 4, z1: 8, color: "flower", mirrorX: true },
+          // Main architectural tower body with deep horizontal bands
           { op: "hollowBox", x0: -8, y0: 6, z0: -7, x1: 8, y1: 30, z1: 7, wall: 1, color: "facade", trim: "facadeShade" },
           { op: "box", x0: -9, y0: 11, z0: -8, x1: 9, y1: 12, z1: 8, color: "facadeShade" },
           { op: "box", x0: -9, y0: 17, z0: -8, x1: 9, y1: 18, z1: 8, color: "facadeShade" },
           { op: "box", x0: -9, y0: 23, z0: -8, x1: 9, y1: 24, z1: 8, color: "facadeShade" },
           { op: "box", x0: -9, y0: 30, z0: -8, x1: 9, y1: 31, z1: 8, color: "slate" },
+          // Rooftop garden lounge & timber pergola
           { op: "box", x0: -7, y0: 31, z0: -6, x1: 7, y1: 32, z1: 6, color: "facadeShade" },
           { op: "box", x0: -6, y0: 32, z0: -5, x1: -1, y1: 36, z1: 0, color: "brick" },
-          { op: "cylinder", axis: "y", cx: 4, y0: 32, y1: 37, cz: -2, radius: 2.2, color: "steel" },
-          { op: "box", x0: 3, y0: 7, z0: 6, x1: 6, y1: 10, z1: 7, color: "warmGlow", emit: 0.9, mirrorX: true },
+          { op: "box", x0: -5, y0: 33, z0: 0, x1: -2, y1: 35, z1: 1, color: "warmGlow", emit: 0.9 },
+          { op: "pillars", x0: 1, y0: 32, z0: -4, x1: 6, y1: 36, z1: 4, color: "wood" },
+          { op: "box", x0: 1, y0: 36, z0: -4, x1: 6, y1: 37, z1: 4, color: "wood" },
+          { op: "sphere", cx: -4, cy: 33, cz: 4, rx: 2.2, ry: 2.0, rz: 2.2, color: "leaf" },
+          { op: "sphere", cx: -3, cy: 34, cz: 4, rx: 1.4, ry: 1.3, rz: 1.4, color: "leafLight" },
+          // Panoramic illuminated apartments & side windows
+          { op: "box", x0: 3, y0: 7, z0: 6, x1: 6, y1: 10, z1: 7, color: "warmGlow", emit: 0.95, mirrorX: true },
           { op: "box", x0: 3, y0: 13, z0: 6, x1: 6, y1: 16, z1: 7, color: "glass", mirrorX: true },
           { op: "box", x0: 3, y0: 19, z0: 6, x1: 6, y1: 22, z1: 7, color: "warmGlow", emit: 0.95, mirrorX: true },
           { op: "box", x0: 3, y0: 25, z0: 6, x1: 6, y1: 28, z1: 7, color: "glass", mirrorX: true },
           { op: "box", x0: -1, y0: 13, z0: 6, x1: 1, y1: 16, z1: 7, color: "warmGlow", emit: 0.85 },
           { op: "box", x0: -1, y0: 25, z0: 6, x1: 1, y1: 28, z1: 7, color: "warmGlow", emit: 0.85 },
           { op: "box", x0: 7, y0: 13, z0: -3, x1: 8, y1: 16, z1: 3, color: "glass", mirrorX: true },
-          { op: "box", x0: 7, y0: 19, z0: -3, x1: 8, y1: 22, z1: 3, color: "warmGlow", emit: 0.8, mirrorX: true },
+          { op: "box", x0: 7, y0: 19, z0: -3, x1: 8, y1: 22, z1: 3, color: "warmGlow", emit: 0.85, mirrorX: true },
           { op: "box", x0: 7, y0: 25, z0: -3, x1: 8, y1: 28, z1: 3, color: "glass", mirrorX: true },
+          // Cantilevered balconies with timber soffits & planters
           { op: "box", x0: 2, y0: 12, z0: 7, x1: 7, y1: 13, z1: 9, color: "balcony", mirrorX: true },
           { op: "box", x0: 2, y0: 18, z0: 7, x1: 7, y1: 19, z1: 9, color: "balcony", mirrorX: true },
           { op: "box", x0: 2, y0: 24, z0: 7, x1: 7, y1: 25, z1: 9, color: "balcony", mirrorX: true },
-          { op: "box", x0: 5, y0: 13, z0: 7, x1: 6, y1: 14, z1: 8, color: "leaf", mirrorX: true },
-          { op: "box", x0: 5, y0: 25, z0: 7, x1: 6, y1: 26, z1: 8, color: "leaf", mirrorX: true },
+          { op: "box", x0: 5, y0: 13, z0: 7, x1: 7, y1: 15, z1: 9, color: "leaf", mirrorX: true },
+          { op: "box", x0: 5, y0: 19, z0: 7, x1: 7, y1: 21, z1: 9, color: "leafLight", mirrorX: true },
+          { op: "box", x0: 5, y0: 25, z0: 7, x1: 7, y1: 27, z1: 9, color: "leaf", mirrorX: true },
         ],
       }),
   },
@@ -130,40 +151,113 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
     id: "predio-comercial",
     categoryId: "predio",
     name: "Torre Comercial",
-    description: "Prédio moderno de vidro e aço com fachada panorâmica e topo iluminado.",
-    meta: "Construção · Grande",
+    description: "Arranha-céu moderno de vidro espelhado e aço com hall iluminado e jardim suspenso.",
+    meta: "Prédio · Grande",
     kind: "creation",
     behaviorHint: "landmark",
     buildBlueprint: () =>
       makeBlueprint({
         name: "Torre Comercial",
-        description: "Edifício comercial de vidro espelhado e aço com hall moderno e topo panorâmico.",
+        description: "Edifício comercial contemporâneo de vidro espelhado, aço escovado e coroa luminosa.",
         category: "building",
         scaleClass: "large",
         palette: {
-          steel: "#546170",
-          steelLight: "#98a8b8",
-          glass: "#76c4e6",
+          steel: "#3f4c5c",
+          steelLight: "#9fb2c4",
+          glass: "#6ac0e6",
           glassBright: "#b4ecff",
           lobbyGlow: "#ffebb0",
-          concrete: "#d8d4ca",
+          concrete: "#e4dfd4",
+          leaf: "#4ca64a",
           beacon: "#ff5c4a",
         },
         ops: [
-          { op: "box", x0: -8, y0: 0, z0: -8, x1: 8, y1: 5, z1: 8, color: "concrete" },
-          { op: "box", x0: -6, y0: 1, z0: 7, x1: 6, y1: 4, z1: 8, color: "lobbyGlow", emit: 1.0 },
-          { op: "box", x0: -7, y0: 5, z0: -7, x1: 7, y1: 34, z1: 7, color: "glass" },
-          { op: "pillars", x0: -7, y0: 5, z0: -7, x1: 7, y1: 35, z1: 7, color: "steel" },
+          { op: "roundedBox", x0: -9, y0: 0, z0: -9, x1: 9, y1: 5, z1: 9, radius: 1.0, color: "concrete" },
+          { op: "box", x0: -6, y0: 1, z0: 8, x1: 6, y1: 4, z1: 9, color: "lobbyGlow", emit: 1.05 },
+          { op: "box", x0: -7, y0: 5, z0: 8, x1: 7, y1: 6, z1: 10, color: "steel" },
+          { op: "box", x0: 7, y0: 5, z0: 7, x1: 9, y1: 7, z1: 9, color: "leaf", mirrorX: true },
+          { op: "roundedBox", x0: -7, y0: 5, z0: -7, x1: 7, y1: 35, z1: 7, radius: 1.1, color: "glass" },
+          { op: "pillars", x0: -7, y0: 5, z0: -7, x1: 7, y1: 36, z1: 7, color: "steel" },
           { op: "box", x0: -8, y0: 10, z0: -8, x1: 8, y1: 11, z1: 8, color: "steelLight" },
           { op: "box", x0: -8, y0: 16, z0: -8, x1: 8, y1: 17, z1: 8, color: "steelLight" },
           { op: "box", x0: -8, y0: 22, z0: -8, x1: 8, y1: 23, z1: 8, color: "steelLight" },
           { op: "box", x0: -8, y0: 28, z0: -8, x1: 8, y1: 29, z1: 8, color: "steelLight" },
           { op: "box", x0: -8, y0: 34, z0: -8, x1: 8, y1: 36, z1: 8, color: "steel" },
-          { op: "box", x0: -5, y0: 12, z0: 6, x1: 5, y1: 15, z1: 7, color: "glassBright", emit: 0.45 },
-          { op: "box", x0: -5, y0: 24, z0: 6, x1: 5, y1: 27, z1: 7, color: "lobbyGlow", emit: 0.7 },
-          { op: "box", x0: -4, y0: 36, z0: -4, x1: 4, y1: 40, z1: 4, color: "steelLight" },
-          { op: "box", x0: 0, y0: 40, z0: 0, x1: 1, y1: 45, z1: 1, color: "steel" },
-          { op: "box", x0: 0, y0: 45, z0: 0, x1: 1, y1: 46, z1: 1, color: "beacon", emit: 1.5 },
+          // Illuminated modern office floors
+          { op: "box", x0: -5, y0: 12, z0: 6, x1: 5, y1: 15, z1: 7, color: "glassBright", emit: 0.55 },
+          { op: "box", x0: -5, y0: 18, z0: 6, x1: 5, y1: 21, z1: 7, color: "lobbyGlow", emit: 0.7 },
+          { op: "box", x0: -5, y0: 24, z0: 6, x1: 5, y1: 27, z1: 7, color: "glassBright", emit: 0.55 },
+          { op: "box", x0: -5, y0: 30, z0: 6, x1: 5, y1: 33, z1: 7, color: "lobbyGlow", emit: 0.85 },
+          // Chamfered architectural sky crown + beacon
+          { op: "roundedBox", x0: -5, y0: 36, z0: -5, x1: 5, y1: 41, z1: 5, radius: 1.0, color: "steelLight" },
+          { op: "box", x0: -4, y0: 37, z0: 4, x1: 4, y1: 40, z1: 5, color: "glassBright", emit: 0.8 },
+          { op: "box", x0: 0, y0: 41, z0: 0, x1: 1, y1: 47, z1: 1, color: "steel" },
+          { op: "box", x0: 0, y0: 47, z0: 0, x1: 1, y1: 48, z1: 1, color: "beacon", emit: 1.6 },
+        ],
+      }),
+  },
+
+  "predio-torre-ouro": {
+    id: "predio-torre-ouro",
+    categoryId: "predio",
+    name: "Torre Cristal & Ouro",
+    description: "Torres gêmeas de vidro e ouro champagne com passarela suspensa, jardins e coroa animada.",
+    meta: "Prédio · Animado · Grande",
+    kind: "creation",
+    behaviorHint: "landmark",
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Torre Cristal & Ouro",
+        description: "Complexo arquitetônico de torres gêmeas envidraçadas unidas por passarela panorâmica e coroa dourada.",
+        category: "building",
+        scaleClass: "large",
+        palette: {
+          marble: "#f4efe4",
+          gold: "#e5ba56",
+          goldDark: "#b88a32",
+          glass: "#6ec4ea",
+          glassBright: "#c2f0ff",
+          navy: "#273344",
+          warmGlow: "#ffe6a0",
+          leaf: "#4aa64a",
+          leafLight: "#78cf64",
+        },
+        ops: [
+          // Sculpted marble plaza + reflection pool
+          { op: "roundedBox", x0: -11, y0: 0, z0: -8, x1: 11, y1: 5, z1: 8, radius: 1.1, color: "marble" },
+          { op: "box", x0: -8, y0: 1, z0: 7, x1: 8, y1: 4, z1: 8, color: "warmGlow", emit: 1.05 },
+          { op: "box", x0: -11, y0: 5, z0: -8, x1: 11, y1: 6, z1: 8, color: "gold" },
+          // Twin glass towers (mirrored)
+          { op: "roundedBox", x0: 3, y0: 6, z0: -6, x1: 10, y1: 35, z1: 6, radius: 1.0, color: "glass", mirrorX: true },
+          { op: "box", x0: 2, y0: 6, z0: -6, x1: 3, y1: 36, z1: 6, color: "navy", mirrorX: true },
+          { op: "box", x0: 10, y0: 6, z0: -6, x1: 11, y1: 36, z1: 6, color: "gold", mirrorX: true },
+          ...[12, 19, 26, 33].map((y) => ({
+            op: "box", x0: 2, y0: y, z0: -7, x1: 11, y1: y + 1, z1: 7, color: "gold", mirrorX: true,
+          })),
+          // Glowing interior bands
+          { op: "box", x0: 4, y0: 14, z0: 5, x1: 9, y1: 17, z1: 6, color: "warmGlow", emit: 0.9, mirrorX: true },
+          { op: "box", x0: 4, y0: 28, z0: 5, x1: 9, y1: 31, z1: 6, color: "glassBright", emit: 0.75, mirrorX: true },
+          // Elevated panoramic skybridge & lush garden terrace
+          { op: "box", x0: -4, y0: 20, z0: -4, x1: 4, y1: 25, z1: 4, color: "glassBright", emit: 0.75 },
+          { op: "box", x0: -4, y0: 19, z0: -5, x1: 4, y1: 20, z1: 5, color: "gold" },
+          { op: "box", x0: -4, y0: 25, z0: -5, x1: 4, y1: 26, z1: 5, color: "marble" },
+          { op: "box", x0: -3, y0: 26, z0: -3, x1: 3, y1: 28, z1: 3, color: "leaf" },
+          { op: "box", x0: -2, y0: 28, z0: -2, x1: 2, y1: 29, z1: 2, color: "leafLight" },
+          // Crown terraces
+          { op: "box", x0: 4, y0: 35, z0: -5, x1: 9, y1: 37, z1: 5, color: "leaf", mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "twin-crown-beacon",
+            kind: "spinY",
+            speed: 0.85,
+            pivot: [0, 29, 0],
+            ops: [
+              { op: "box", x0: -1, y0: 0, z0: -1, x1: 1, y1: 9, z1: 1, color: "gold" },
+              { op: "ring", axis: "y", cx: 0, cz: 0, y0: 5, y1: 7, outerR: 3.2, innerR: 2.0, color: "gold", emit: 1.1 },
+              { op: "box", x0: -1, y0: 9, z0: -1, x1: 1, y1: 11, z1: 1, color: "warmGlow", emit: 1.5 },
+            ],
+          },
         ],
       }),
   },
@@ -432,40 +526,51 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
     id: "casa-campo",
     categoryId: "casa",
     name: "Casa de Campo",
-    description: "Telhado cerâmico, varanda de madeira, chaminé e floreiras coloridas.",
+    description: "Telhado cerâmico detalhado, varanda com lanterna, chaminé de pedra e jardim florido.",
     meta: "Casa · Médio",
     kind: "creation",
     behaviorHint: "landmark",
     buildBlueprint: () =>
       makeBlueprint({
         name: "Casa de Campo",
-        description: "Casa charmosa com telhado em duas águas, chaminé de tijolos e varanda florida.",
+        description: "Casa acolhedora com telhado cerâmico em duas águas, chaminé de pedra e jardim florido.",
         category: "building",
         scaleClass: "medium",
         palette: {
-          plaster: "#f7efe0",
+          plaster: "#faf3e6",
           wood: "#a87040",
-          woodDark: "#6e4626",
-          roof: "#c96244",
-          brick: "#b35b42",
-          windowGlow: "#ffe296",
-          leaf: "#58ad52",
-          flower: "#ec7da0",
+          woodDark: "#684224",
+          roof: "#c95c3f",
+          roofShade: "#a4452c",
+          brick: "#b05a40",
+          windowGlow: "#ffe59c",
+          leaf: "#4aa64a",
+          leafLight: "#76d166",
+          flower: "#f2789f",
+          flowerYellow: "#f8d454",
           stone: "#cfc8ba",
         },
         ops: [
-          { op: "hollowBox", x0: -8, y0: 0, z0: -6, x1: 8, y1: 9, z1: 6, wall: 1, color: "plaster", trim: "wood" },
-          { op: "roofGable", x0: -9, yBase: 9, z0: -7, x1: 9, z1: 7, rise: 6, axis: "x", color: "roof", trim: "woodDark" },
-          { op: "box", x0: 4, y0: 10, z0: -4, x1: 7, y1: 18, z1: -1, color: "brick" },
-          { op: "box", x0: -6, y0: 0, z0: 6, x1: 6, y1: 1, z1: 9, color: "stone" },
+          { op: "box", x0: -9, y0: 0, z0: -7, x1: 9, y1: 1, z1: 10, color: "stone" },
+          { op: "hollowBox", x0: -8, y0: 1, z0: -6, x1: 8, y1: 10, z1: 6, wall: 1, color: "plaster", trim: "wood" },
+          { op: "roofGable", x0: -9, yBase: 10, z0: -7, x1: 9, z1: 7, rise: 6, axis: "x", color: "roof", trim: "woodDark" },
+          { op: "box", x0: 4, y0: 11, z0: -4, x1: 7, y1: 19, z1: -1, color: "brick" },
+          { op: "box", x0: 3, y0: 18, z0: -5, x1: 8, y1: 19, z1: 0, color: "stone" },
+          // Front veranda with lantern & stairs
           { op: "pillars", x0: -6, y0: 1, z0: 6, x1: 6, y1: 7, z1: 9, color: "wood" },
-          { op: "box", x0: -6, y0: 7, z0: 6, x1: 6, y1: 8, z1: 9, color: "roof" },
+          { op: "box", x0: -7, y0: 7, z0: 6, x1: 7, y1: 8, z1: 10, color: "roofShade" },
           { op: "box", x0: -1, y0: 1, z0: 5, x1: 2, y1: 6, z1: 6, color: "woodDark" },
+          { op: "box", x0: 0, y0: 6, z0: 8, x1: 1, y1: 7, z1: 9, color: "windowGlow", emit: 1.4 },
+          // Glowing windows with flower boxes
           { op: "box", x0: 4, y0: 3, z0: 5, x1: 7, y1: 6, z1: 6, color: "windowGlow", emit: 1.0, mirrorX: true },
           { op: "box", x0: 4, y0: 2, z0: 6, x1: 7, y1: 3, z1: 7, color: "woodDark", mirrorX: true },
           { op: "box", x0: 4, y0: 3, z0: 6, x1: 7, y1: 4, z1: 7, color: "leaf", mirrorX: true },
           { op: "box", x0: 5, y0: 4, z0: 6, x1: 6, y1: 5, z1: 7, color: "flower", mirrorX: true },
           { op: "box", x0: 7, y0: 3, z0: -2, x1: 8, y1: 6, z1: 2, color: "windowGlow", emit: 0.9, mirrorX: true },
+          // Lush sculpted corner garden shrubs & blooms
+          { op: "sphere", cx: 8, cy: 2.4, cz: 8, rx: 2.1, ry: 1.9, rz: 2.1, color: "leaf", mirrorX: true },
+          { op: "box", x0: 7, y0: 3, z0: 8, x1: 8, y1: 4, z1: 9, color: "flowerYellow", mirrorX: true },
+          { op: "sphere", cx: -8, cy: 2.6, cz: -5, rx: 2.0, ry: 2.2, rz: 2.0, color: "leafLight" },
         ],
       }),
   },
@@ -474,33 +579,96 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
     id: "casa-moderna",
     categoryId: "casa",
     name: "Sobrado Moderno",
-    description: "Dois andares com janelas amplas, deck de madeira e iluminação aconchegante.",
+    description: "Arquitetura contemporânea com brises de madeira, vidro panorâmico e deck iluminado.",
     meta: "Casa · Médio",
     kind: "creation",
     behaviorHint: "landmark",
     buildBlueprint: () =>
       makeBlueprint({
         name: "Sobrado Moderno",
-        description: "Residência contemporânea em dois pavimentos com grandes painéis de vidro e varanda superior.",
+        description: "Residência contemporânea com brises de madeira, grandes panos de vidro, deck e paisagismo.",
         category: "building",
         scaleClass: "medium",
         palette: {
-          white: "#f6f5f0",
-          charcoal: "#343a44",
-          wood: "#c98f56",
-          glass: "#a2dff2",
+          white: "#f8f6f1",
+          charcoal: "#2f3640",
+          wood: "#c98b4e",
+          woodDark: "#8f5c2c",
+          glass: "#8cd8f2",
           warmGlow: "#ffe6a6",
-          leaf: "#58ad52",
+          stone: "#ddd6c8",
+          leaf: "#49a84a",
+          leafLight: "#76d166",
         },
         ops: [
-          { op: "hollowBox", x0: -8, y0: 0, z0: -6, x1: 8, y1: 7, z1: 6, wall: 1, color: "white", trim: "charcoal" },
-          { op: "box", x0: -6, y0: 1, z0: 5, x1: 2, y1: 6, z1: 6, color: "glass" },
-          { op: "box", x0: 3, y0: 1, z0: 5, x1: 6, y1: 6, z1: 6, color: "wood" },
+          { op: "box", x0: -9, y0: 0, z0: -7, x1: 9, y1: 1, z1: 10, color: "stone" },
+          { op: "hollowBox", x0: -8, y0: 1, z0: -6, x1: 8, y1: 7, z1: 6, wall: 1, color: "white", trim: "charcoal" },
+          { op: "box", x0: -6, y0: 2, z0: 5, x1: 2, y1: 6, z1: 6, color: "warmGlow", emit: 0.95 },
+          { op: "box", x0: 3, y0: 1, z0: 5, x1: 7, y1: 7, z1: 6, color: "wood" },
+          // Second floor cantilevered architectural volume
           { op: "hollowBox", x0: -7, y0: 7, z0: -6, x1: 9, y1: 14, z1: 8, wall: 1, color: "white", trim: "charcoal" },
-          { op: "box", x0: -5, y0: 8, z0: 7, x1: 7, y1: 12, z1: 8, color: "warmGlow", emit: 0.85 },
+          { op: "box", x0: -5, y0: 8, z0: 7, x1: 7, y1: 12, z1: 8, color: "glass" },
+          { op: "box", x0: -4, y0: 9, z0: 6, x1: 6, y1: 12, z1: 7, color: "warmGlow", emit: 0.85 },
+          // Timber brise-soleil louvers
+          { op: "box", x0: 7, y0: 8, z0: 6, x1: 8, y1: 14, z1: 8, color: "woodDark" },
+          { op: "box", x0: 5, y0: 8, z0: 7, x1: 6, y1: 14, z1: 8, color: "wood" },
           { op: "box", x0: -8, y0: 14, z0: -7, x1: 10, y1: 15, z1: 9, color: "charcoal" },
-          { op: "box", x0: -8, y0: 0, z0: 6, x1: -2, y1: 1, z1: 9, color: "wood" },
-          { op: "box", x0: -8, y0: 1, z0: 8, x1: -5, y1: 3, z1: 9, color: "leaf" },
+          { op: "box", x0: -7, y0: 15, z0: -6, x1: 9, y1: 16, z1: 8, color: "wood" },
+          // Garden deck & lush ornamental shrubs
+          { op: "box", x0: -8, y0: 1, z0: 6, x1: -1, y1: 2, z1: 10, color: "wood" },
+          { op: "sphere", cx: -8, cy: 3.2, cz: 8, rx: 2.2, ry: 2.2, rz: 2.2, color: "leaf" },
+          { op: "sphere", cx: -7, cy: 4.0, cz: 8, rx: 1.4, ry: 1.4, rz: 1.4, color: "leafLight" },
+          { op: "box", x0: 4, y0: 1, z0: 8, x1: 8, y1: 3, z1: 10, color: "leaf" },
+        ],
+      }),
+  },
+
+  "casa-villa-jardim": {
+    id: "casa-villa-jardim",
+    categoryId: "casa",
+    name: "Villa Contemporânea",
+    description: "Casa de alto padrão com espelho d'água, pergolado de madeira, vidro e jardins iluminados.",
+    meta: "Casa · Luxo · Grande",
+    kind: "creation",
+    behaviorHint: "landmark",
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Villa Contemporânea",
+        description: "Villa de design contemporâneo com espelho d'água turquesa, pergolado de madeira e jardins.",
+        category: "building",
+        scaleClass: "large",
+        palette: {
+          travertine: "#f4ede0",
+          stone: "#d6cdbc",
+          charcoal: "#2d343e",
+          wood: "#be8348",
+          glass: "#94daf2",
+          warmGlow: "#ffe6a0",
+          water: "#3ec5eb",
+          leaf: "#49a84a",
+          leafLight: "#7cd66a",
+          flower: "#f6c94c",
+        },
+        ops: [
+          { op: "box", x0: -11, y0: 0, z0: -9, x1: 11, y1: 1, z1: 11, color: "stone" },
+          // Reflecting pool & stepping stones
+          { op: "box", x0: -9, y0: 1, z0: 4, x1: 3, y1: 2, z1: 10, color: "water", emit: 0.4 },
+          { op: "box", x0: -4, y0: 1, z0: 5, x1: -2, y1: 2, z1: 7, color: "travertine" },
+          { op: "box", x0: -4, y0: 1, z0: 8, x1: -2, y1: 2, z1: 10, color: "travertine" },
+          // Ground pavilion
+          { op: "hollowBox", x0: -10, y0: 1, z0: -8, x1: 10, y1: 8, z1: 3, wall: 1, color: "travertine", trim: "charcoal" },
+          { op: "box", x0: -8, y0: 2, z0: 2, x1: 8, y1: 7, z1: 3, color: "warmGlow", emit: 1.0 },
+          // Upper glass gallery & wooden pergola
+          { op: "hollowBox", x0: -10, y0: 8, z0: -7, x1: 4, y1: 14, z1: 4, wall: 1, color: "travertine", trim: "wood" },
+          { op: "box", x0: -8, y0: 9, z0: 3, x1: 2, y1: 13, z1: 4, color: "glass" },
+          { op: "box", x0: -11, y0: 14, z0: -8, x1: 11, y1: 15, z1: 5, color: "charcoal" },
+          { op: "pillars", x0: 4, y0: 8, z0: -6, x1: 10, y1: 14, z1: 3, color: "wood" },
+          // Lush sculpted ornamental trees
+          { op: "box", x0: 8, y0: 1, z0: 8, x1: 9, y1: 7, z1: 9, color: "wood" },
+          { op: "sphere", cx: 8, cy: 8.5, cz: 8, rx: 3.0, ry: 2.3, rz: 3.0, color: "leaf" },
+          { op: "sphere", cx: 9, cy: 9.5, cz: 9, rx: 1.9, ry: 1.5, rz: 1.9, color: "leafLight" },
+          { op: "sphere", cx: -10, cy: 2.6, cz: 8, rx: 2.0, ry: 1.8, rz: 2.0, color: "leaf" },
+          { op: "box", x0: -10, y0: 3, z0: 8, x1: -9, y1: 4, z1: 9, color: "flower" },
         ],
       }),
   },
@@ -751,16 +919,396 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
       }),
   },
 
-  // ---------------- 3. CARRO ----------------
+  // ---------------- 3. CARRO (MODERNOS, PATRULHA E BOMBEIRO) ----------------
+  "carro-hypercar": {
+    id: "carro-hypercar",
+    categoryId: "carro",
+    name: "Hypercar Elétrico",
+    description: "Superesportivo moderno aerodinâmico com faixa LED dianteira e traseira, aerofólio e rodas de liga.",
+    meta: "Carro Moderno · Anda na estrada",
+    kind: "creation",
+    behaviorHint: "vehicle_route",
+    speed: 6.8,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Hypercar Elétrico",
+        description: "Superesportivo elétrico azul-metálico com faixa LED e design aerodinâmico rodando nas estradas.",
+        category: "vehicle",
+        scaleClass: "small",
+        palette: {
+          body: "#1e4b8a",
+          bodyLight: "#346fc0",
+          carbon: "#1b1f27",
+          glass: "#74c2e6",
+          ledFront: "#f2fbff",
+          ledRear: "#ff2a3c",
+          chrome: "#e2eaf2",
+          caliper: "#ff5533",
+          tire: "#181b20",
+        },
+        ops: [
+          // Sculpted low-slung splitter & aerodynamic chassis
+          { op: "box", x0: -6, y0: 1, z0: -11, x1: 6, y1: 2, z1: 11, color: "carbon" },
+          { op: "roundedBox", x0: -6, y0: 2, z0: -11, x1: 6, y1: 5, z1: 11, radius: 1.4, color: "body" },
+          { op: "box", x0: -4, y0: 4, z0: 4, x1: 4, y1: 5, z1: 10, color: "bodyLight" },
+          // Side intake scoops & mirrors
+          { op: "box", x0: 5, y0: 2, z0: -3, x1: 6, y1: 4, z1: 2, color: "carbon", mirrorX: true },
+          { op: "box", x0: 5, y0: 5, z0: 2, x1: 7, y1: 6, z1: 3, color: "carbon", mirrorX: true },
+          // Sleek smoked panoramic canopy
+          { op: "roundedBox", x0: -4, y0: 5, z0: -5, x1: 4, y1: 7, z1: 4, radius: 1.2, color: "carbon" },
+          { op: "box", x0: -4, y0: 5, z0: -3, x1: 4, y1: 7, z1: 5, color: "glass" },
+          // Active carbon rear wing + diffuser
+          { op: "box", x0: -6, y0: 6, z0: -11, x1: 6, y1: 7, z1: -9, color: "carbon" },
+          { op: "box", x0: 3, y0: 5, z0: -10, x1: 4, y1: 6, z1: -9, color: "carbon", mirrorX: true },
+          // Full-width modern LED headlight & crimson taillight bar
+          { op: "box", x0: -5, y0: 3, z0: 10, x1: 5, y1: 4, z1: 11, color: "ledFront", emit: 1.7 },
+          { op: "box", x0: -5, y0: 3, z0: -11, x1: 5, y1: 4, z1: -10, color: "ledRear", emit: 1.6 },
+          // Wheel wells
+          { op: "clear", x0: 4, y0: 0, z0: 4, x1: 7, y1: 4, z1: 10, mirrorX: true },
+          { op: "clear", x0: 4, y0: 0, z0: -10, x1: 7, y1: 4, z1: -4, mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "front-axle",
+            kind: "wheel",
+            speed: 1.35,
+            pivot: [0, 2.2, 6.8],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.2, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+              { op: "box", x0: 5, y0: 0, z0: -1, x1: 6, y1: 1, z1: 0, color: "caliper", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle",
+            kind: "wheel",
+            speed: 1.35,
+            pivot: [0, 2.2, -6.8],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.2, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+              { op: "box", x0: 5, y0: 0, z0: -1, x1: 6, y1: 1, z1: 0, color: "caliper", mirrorX: true },
+            ],
+          },
+        ],
+      }),
+  },
+
+  "carro-suv-moderno": {
+    id: "carro-suv-moderno",
+    categoryId: "carro",
+    name: "SUV Moderno",
+    description: "SUV de luxo branco pérola com teto panorâmico preto, faróis LED e rodas esportivas.",
+    meta: "Carro Moderno · Anda na estrada",
+    kind: "creation",
+    behaviorHint: "vehicle_route",
+    speed: 5.8,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "SUV Moderno",
+        description: "SUV contemporâneo branco pérola com teto panorâmico e faróis LED circulando pelas estradas.",
+        category: "vehicle",
+        scaleClass: "small",
+        palette: {
+          pearl: "#f4f6f8",
+          pearlShade: "#d8dee6",
+          obsidian: "#1e232c",
+          glass: "#5a8ca8",
+          chrome: "#dce6f0",
+          ledFront: "#f6fcff",
+          ledRear: "#ff3338",
+          tire: "#1a1d24",
+        },
+        ops: [
+          { op: "box", x0: -6, y0: 2, z0: -11, x1: 6, y1: 3, z1: 11, color: "obsidian" },
+          { op: "roundedBox", x0: -6, y0: 3, z0: -11, x1: 6, y1: 6, z1: 11, radius: 1.2, color: "pearl" },
+          { op: "roundedBox", x0: -5, y0: 6, z0: -9, x1: 5, y1: 10, z1: 5, radius: 1.2, color: "obsidian" },
+          { op: "box", x0: -5, y0: 6, z0: -8, x1: 5, y1: 9, z1: 6, color: "glass" },
+          { op: "box", x0: -4, y0: 10, z0: -8, x1: 4, y1: 11, z1: 3, color: "obsidian" },
+          { op: "box", x0: 4, y0: 10, z0: -8, x1: 5, y1: 11, z1: 3, color: "chrome", mirrorX: true },
+          // Modern grille, mirrors & LED lightbars
+          { op: "box", x0: -4, y0: 3, z0: 10, x1: 4, y1: 5, z1: 12, color: "obsidian" },
+          { op: "box", x0: -3, y0: 4, z0: 11, x1: 3, y1: 5, z1: 12, color: "chrome" },
+          { op: "box", x0: 4, y0: 5, z0: 10, x1: 6, y1: 6, z1: 11, color: "ledFront", emit: 1.6, mirrorX: true },
+          { op: "box", x0: -5, y0: 5, z0: -11, x1: 5, y1: 6, z1: -10, color: "ledRear", emit: 1.5 },
+          { op: "box", x0: 5, y0: 6, z0: 3, x1: 7, y1: 7, z1: 4, color: "obsidian", mirrorX: true },
+          { op: "clear", x0: 4, y0: 0, z0: 4, x1: 7, y1: 5, z1: 10, mirrorX: true },
+          { op: "clear", x0: 4, y0: 0, z0: -10, x1: 7, y1: 5, z1: -4, mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "front-axle",
+            kind: "wheel",
+            speed: 1.15,
+            pivot: [0, 2.5, 7],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.5, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.3, color: "chrome", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle",
+            kind: "wheel",
+            speed: 1.15,
+            pivot: [0, 2.5, -7],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.5, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.3, color: "chrome", mirrorX: true },
+            ],
+          },
+        ],
+      }),
+  },
+
+  "carro-sedan-executivo": {
+    id: "carro-sedan-executivo",
+    categoryId: "carro",
+    name: "Sedan Executivo",
+    description: "Sedan fastback prata metálico com grade cromada, faróis LED e acabamento sofisticado.",
+    meta: "Carro Moderno · Anda na estrada",
+    kind: "creation",
+    behaviorHint: "vehicle_route",
+    speed: 6.1,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Sedan Executivo",
+        description: "Sedan executivo prata metálico com design fastback moderno percorrendo as vias da ilha.",
+        category: "vehicle",
+        scaleClass: "small",
+        palette: {
+          silver: "#cfd8e2",
+          silverDark: "#8f9dac",
+          trim: "#202630",
+          glass: "#5d90b0",
+          chrome: "#edf4fa",
+          ledFront: "#f4fbff",
+          ledRear: "#ff3338",
+          tire: "#1a1d24",
+        },
+        ops: [
+          { op: "box", x0: -5, y0: 1, z0: -11, x1: 5, y1: 2, z1: 11, color: "trim" },
+          { op: "roundedBox", x0: -5, y0: 2, z0: -11, x1: 5, y1: 5, z1: 11, radius: 1.3, color: "silver" },
+          { op: "roundedBox", x0: -4, y0: 5, z0: -6, x1: 4, y1: 8, z1: 4, radius: 1.2, color: "silver" },
+          { op: "box", x0: -4, y0: 5, z0: -5, x1: 4, y1: 7, z1: 5, color: "glass" },
+          { op: "box", x0: -3, y0: 3, z0: 10, x1: 3, y1: 4, z1: 12, color: "trim" },
+          { op: "box", x0: 5, y0: 5, z0: 3, x1: 6, y1: 6, z1: 4, color: "silverDark", mirrorX: true },
+          { op: "box", x0: 3, y0: 4, z0: 10, x1: 5, y1: 5, z1: 11, color: "ledFront", emit: 1.6, mirrorX: true },
+          { op: "box", x0: -5, y0: 4, z0: -11, x1: 5, y1: 5, z1: -10, color: "ledRear", emit: 1.5 },
+          { op: "clear", x0: 3, y0: 0, z0: 4, x1: 6, y1: 4, z1: 10, mirrorX: true },
+          { op: "clear", x0: 3, y0: 0, z0: -10, x1: 6, y1: 4, z1: -4, mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "front-axle",
+            kind: "wheel",
+            speed: 1.25,
+            pivot: [0, 2.1, 6.8],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.1, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.15, color: "chrome", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle",
+            kind: "wheel",
+            speed: 1.25,
+            pivot: [0, 2.1, -6.8],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.1, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.15, color: "chrome", mirrorX: true },
+            ],
+          },
+        ],
+      }),
+  },
+
+  "carro-patrulha": {
+    id: "carro-patrulha",
+    categoryId: "carro",
+    name: "Viatura Patrulha",
+    description: "Viatura policial moderna com para-choque reforçado, faixa azul e giroflex vermelho e azul animado.",
+    meta: "Emergência · Anda na estrada",
+    kind: "creation",
+    behaviorHint: "vehicle_route",
+    speed: 6.5,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Viatura Patrulha",
+        description: "Viatura policial moderna fazendo patrulha pelas estradas da ilha com giroflex aceso.",
+        category: "vehicle",
+        scaleClass: "small",
+        palette: {
+          white: "#f5f7fa",
+          navy: "#1b2434",
+          stripe: "#2568d8",
+          glass: "#6294b8",
+          chrome: "#dce6f0",
+          sirenRed: "#ff2636",
+          sirenBlue: "#268bff",
+          ledFront: "#f6fcff",
+          ledRear: "#ff3338",
+          tire: "#181b22",
+        },
+        ops: [
+          // Heavy interceptor chassis (black front/rear, white doors, blue tactical stripe)
+          { op: "roundedBox", x0: -6, y0: 2, z0: -11, x1: 6, y1: 6, z1: 11, radius: 1.2, color: "navy" },
+          { op: "box", x0: -6, y0: 2, z0: -5, x1: 6, y1: 6, z1: 5, color: "white" },
+          { op: "box", x0: -6, y0: 4, z0: -10, x1: 6, y1: 5, z1: 10, color: "stripe" },
+          // Reinforced front bullbar & push bumper
+          { op: "box", x0: -4, y0: 2, z0: 11, x1: 4, y1: 5, z1: 12, color: "navy" },
+          { op: "box", x0: -3, y0: 3, z0: 11, x1: 3, y1: 4, z1: 12, color: "chrome" },
+          // SUV Interceptor cabin
+          { op: "roundedBox", x0: -5, y0: 6, z0: -8, x1: 5, y1: 10, z1: 5, radius: 1.1, color: "white" },
+          { op: "box", x0: -5, y0: 6, z0: -7, x1: 5, y1: 9, z1: 6, color: "glass" },
+          { op: "box", x0: -4, y0: 9, z0: -7, x1: 4, y1: 10, z1: 4, color: "navy" },
+          // Mirrors + LED headlights & taillights
+          { op: "box", x0: 5, y0: 6, z0: 3, x1: 7, y1: 7, z1: 4, color: "navy", mirrorX: true },
+          { op: "box", x0: 4, y0: 4, z0: 10, x1: 6, y1: 5, z1: 11, color: "ledFront", emit: 1.7, mirrorX: true },
+          { op: "box", x0: 3, y0: 4, z0: -11, x1: 6, y1: 5, z1: -10, color: "ledRear", emit: 1.5, mirrorX: true },
+          { op: "clear", x0: 4, y0: 0, z0: 4, x1: 7, y1: 5, z1: 10, mirrorX: true },
+          { op: "clear", x0: 4, y0: 0, z0: -10, x1: 7, y1: 5, z1: -4, mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "police-giroflex",
+            kind: "spinY",
+            speed: 7.5,
+            pivot: [0, 10.5, 0],
+            ops: [
+              { op: "box", x0: -3, y0: 0, z0: -1, x1: 0, y1: 2, z1: 1, color: "sirenRed", emit: 1.9 },
+              { op: "box", x0: 0, y0: 0, z0: -1, x1: 3, y1: 2, z1: 1, color: "sirenBlue", emit: 1.9 },
+              { op: "box", x0: -1, y0: 0, z0: -1, x1: 1, y1: 1, z1: 1, color: "chrome" },
+            ],
+          },
+          {
+            name: "front-axle",
+            kind: "wheel",
+            speed: 1.25,
+            pivot: [0, 2.4, 7],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.4, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle",
+            kind: "wheel",
+            speed: 1.25,
+            pivot: [0, 2.4, -7],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.4, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+            ],
+          },
+        ],
+      }),
+  },
+
+  "carro-bombeiro": {
+    id: "carro-bombeiro",
+    categoryId: "carro",
+    name: "Caminhão Bombeiro",
+    description: "Caminhão de bombeiros vermelho com escada extensível, painel de bombas e sirene giratória.",
+    meta: "Emergência · Anda na estrada",
+    kind: "creation",
+    behaviorHint: "vehicle_route",
+    speed: 5.1,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Caminhão Bombeiro",
+        description: "Caminhão de bombeiros equipado com escada cromada, mangueiras e giroflex circulando pelas estradas.",
+        category: "vehicle",
+        scaleClass: "medium",
+        palette: {
+          fireRed: "#d82624",
+          fireDark: "#9e1918",
+          white: "#f6f7fa",
+          chrome: "#dce5ee",
+          metal: "#8896a4",
+          glass: "#7bc6e8",
+          amber: "#ffaa22",
+          sirenRed: "#ff2a2a",
+          ledFront: "#fff6cc",
+          tire: "#1a1d22",
+        },
+        ops: [
+          // Heavy fire engine body & cab
+          { op: "roundedBox", x0: -6, y0: 2, z0: -14, x1: 6, y1: 11, z1: 13, radius: 1.1, color: "fireRed" },
+          { op: "box", x0: -6, y0: 5, z0: -14, x1: 6, y1: 6, z1: 13, color: "white" },
+          // Panoramic front cab windshield + chrome grille
+          { op: "box", x0: -5, y0: 7, z0: 8, x1: 5, y1: 10, z1: 14, color: "glass" },
+          { op: "box", x0: -5, y0: 2, z0: 13, x1: 5, y1: 4, z1: 14, color: "chrome" },
+          { op: "box", x0: -3, y0: 4, z0: 13, x1: 3, y1: 6, z1: 14, color: "metal" },
+          // Side metallic equipment shutters & water pump control bay
+          { op: "box", x0: 5, y0: 3, z0: -12, x1: 6, y1: 9, z1: -6, color: "chrome", mirrorX: true },
+          { op: "box", x0: 5, y0: 3, z0: -4, x1: 6, y1: 9, z1: 3, color: "metal", mirrorX: true },
+          // Rooftop extendable chrome ladder & turntable
+          { op: "box", x0: -3, y0: 11, z0: -13, x1: 3, y1: 12, z1: 6, color: "metal" },
+          { op: "box", x0: 2, y0: 12, z0: -13, x1: 3, y1: 14, z1: 7, color: "chrome", mirrorX: true },
+          ...[-11, -7, -3, 1, 5].map((rz) => ({
+            op: "box", x0: -2, y0: 13, z0: rz, x1: 2, y1: 14, z1: rz + 1, color: "chrome",
+          })),
+          // LED headlights & rear warning lights
+          { op: "box", x0: 4, y0: 3, z0: 12, x1: 6, y1: 5, z1: 14, color: "ledFront", emit: 1.6, mirrorX: true },
+          { op: "box", x0: 4, y0: 9, z0: -15, x1: 6, y1: 11, z1: -14, color: "sirenRed", emit: 1.5, mirrorX: true },
+          // Wheel arches
+          { op: "clear", x0: 4, y0: 0, z0: 6, x1: 7, y1: 5, z1: 12, mirrorX: true },
+          { op: "clear", x0: 4, y0: 0, z0: -12, x1: 7, y1: 5, z1: -4, mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "fire-siren-bar",
+            kind: "spinY",
+            speed: 6.8,
+            pivot: [0, 11.5, 10],
+            ops: [
+              { op: "box", x0: -4, y0: 0, z0: -1, x1: 0, y1: 2, z1: 1, color: "sirenRed", emit: 1.9 },
+              { op: "box", x0: 0, y0: 0, z0: -1, x1: 4, y1: 2, z1: 1, color: "amber", emit: 1.8 },
+            ],
+          },
+          {
+            name: "front-axle",
+            kind: "wheel",
+            speed: 1.0,
+            pivot: [0, 2.5, 9],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 2.5, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle-1",
+            kind: "wheel",
+            speed: 1.0,
+            pivot: [0, 2.5, -6],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 2.5, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle-2",
+            kind: "wheel",
+            speed: 1.0,
+            pivot: [0, 2.5, -10.5],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 2.5, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+            ],
+          },
+        ],
+      }),
+  },
+
   "carro-esportivo": {
     id: "carro-esportivo",
     categoryId: "carro",
     name: "Carro Esportivo",
-    description: "Cupê vermelho rápido com aerofólio, faróis acesos e rodas giratórias.",
-    meta: "Carro · Dirige no mapa",
+    description: "Cupê esportivo vermelho com aerofólio, retrovisores, faróis LED e rodas de liga.",
+    meta: "Carro · Anda na estrada",
     kind: "creation",
     behaviorHint: "vehicle_route",
-    speed: 6.2,
+    speed: 6.4,
     buildBlueprint: () =>
       makeBlueprint({
         name: "Carro Esportivo",
@@ -768,25 +1316,26 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
         category: "vehicle",
         scaleClass: "small",
         palette: {
-          red: "#df443a",
-          redDark: "#a82d26",
-          glass: "#9bdaf0",
-          trim: "#22262e",
-          chrome: "#dce4ec",
-          headlight: "#fff2b8",
-          taillight: "#ff3e36",
-          tire: "#1f2228",
+          red: "#df362d",
+          redDark: "#a6221c",
+          glass: "#7cc8e6",
+          trim: "#1f232b",
+          chrome: "#e2eaf2",
+          headlight: "#f6fbff",
+          taillight: "#ff2e28",
+          tire: "#181b20",
         },
         ops: [
           { op: "roundedBox", x0: -5, y0: 2, z0: -10, x1: 5, y1: 5, z1: 10, radius: 1.3, color: "red" },
           { op: "box", x0: -5, y0: 1, z0: -10, x1: 5, y1: 2, z1: 10, color: "redDark" },
           { op: "roundedBox", x0: -4, y0: 5, z0: -5, x1: 4, y1: 8, z1: 4, radius: 1.1, color: "red" },
           { op: "box", x0: -3, y0: 5, z0: -4, x1: 3, y1: 7, z1: 5, color: "glass" },
+          { op: "box", x0: 4, y0: 5, z0: 2, x1: 6, y1: 6, z1: 3, color: "trim", mirrorX: true },
           { op: "box", x0: -5, y0: 6, z0: -10, x1: 5, y1: 7, z1: -8, color: "trim" },
           { op: "box", x0: 3, y0: 5, z0: -9, x1: 4, y1: 6, z1: -8, color: "trim", mirrorX: true },
           { op: "box", x0: -4, y0: 2, z0: 10, x1: 4, y1: 3, z1: 11, color: "trim" },
-          { op: "box", x0: 3, y0: 3, z0: 9, x1: 5, y1: 4, z1: 10, color: "headlight", emit: 1.5, mirrorX: true },
-          { op: "box", x0: 3, y0: 3, z0: -10, x1: 5, y1: 4, z1: -9, color: "taillight", emit: 1.3, mirrorX: true },
+          { op: "box", x0: 3, y0: 3, z0: 9, x1: 5, y1: 4, z1: 10, color: "headlight", emit: 1.6, mirrorX: true },
+          { op: "box", x0: -5, y0: 3, z0: -10, x1: 5, y1: 4, z1: -9, color: "taillight", emit: 1.5 },
           { op: "clear", x0: 3, y0: 0, z0: 4, x1: 6, y1: 4, z1: 9, mirrorX: true },
           { op: "clear", x0: 3, y0: 0, z0: -9, x1: 6, y1: 4, z1: -4, mirrorX: true },
         ],
@@ -794,21 +1343,290 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
           {
             name: "front-axle",
             kind: "wheel",
-            speed: 1.2,
+            speed: 1.25,
             pivot: [0, 2, 6.5],
             ops: [
-              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.0, color: "tire", mirrorX: true },
-              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.0, color: "chrome", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.1, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.1, color: "chrome", mirrorX: true },
             ],
           },
           {
             name: "rear-axle",
             kind: "wheel",
-            speed: 1.2,
+            speed: 1.25,
             pivot: [0, 2, -6.5],
             ops: [
-              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.0, color: "tire", mirrorX: true },
-              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.0, color: "chrome", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.1, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.1, color: "chrome", mirrorX: true },
+            ],
+          },
+        ],
+      }),
+  },
+
+  // ---------------- 3B. MÁQUINAS PESADAS (ANDAM NA ESTRADA) ----------------
+  "maquina-pa-carregadeira": {
+    id: "maquina-pa-carregadeira",
+    categoryId: "maquinas",
+    name: "Pá Carregadeira",
+    description: "Máquina pá carregadeira amarela com pneus gigantes, giroflex âmbar e concha hidráulica animada.",
+    meta: "Máquina Pesada · Anda na estrada",
+    kind: "creation",
+    behaviorHint: "vehicle_route",
+    speed: 3.6,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Pá Carregadeira",
+        description: "Pá carregadeira articulada amarela operando e trafegando pelas estradas da ilha.",
+        category: "vehicle",
+        scaleClass: "medium",
+        palette: {
+          catYellow: "#f2b718",
+          catDark: "#c78e0a",
+          steel: "#2d323a",
+          steelLight: "#6f7a88",
+          glass: "#8cd4ee",
+          amber: "#ff9e16",
+          headlight: "#fff6cc",
+          tire: "#1b1e24",
+        },
+        ops: [
+          // Heavy articulated body + rear engine counterweight
+          { op: "roundedBox", x0: -5, y0: 3, z0: -11, x1: 5, y1: 8, z1: 4, radius: 1.0, color: "catYellow" },
+          { op: "box", x0: -5, y0: 2, z0: -12, x1: 5, y1: 5, z1: -8, color: "steel" },
+          { op: "box", x0: -4, y0: 8, z0: -10, x1: 4, y1: 10, z1: -4, color: "catDark" },
+          // Vertical exhaust pipe
+          { op: "box", x0: 3, y0: 9, z0: -7, x1: 4, y1: 14, z1: -6, color: "steel" },
+          // High-visibility glazed operator cab
+          { op: "hollowBox", x0: -4, y0: 8, z0: -4, x1: 4, y1: 14, z1: 3, wall: 1, color: "steel" },
+          { op: "box", x0: -3, y0: 9, z0: -3, x1: 3, y1: 13, z1: 4, color: "glass" },
+          { op: "box", x0: -5, y0: 14, z0: -5, x1: 5, y1: 15, z1: 4, color: "catYellow" },
+          { op: "box", x0: 3, y0: 12, z0: 3, x1: 5, y1: 13, z1: 4, color: "headlight", emit: 1.5, mirrorX: true },
+          // Wheel arches
+          { op: "clear", x0: 3, y0: 0, z0: 1, x1: 7, y1: 6, z1: 8, mirrorX: true },
+          { op: "clear", x0: 3, y0: 0, z0: -10, x1: 7, y1: 6, z1: -3, mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "loader-arm-bucket",
+            kind: "swingX",
+            speed: 1.4,
+            amp: 0.22,
+            pivot: [0, 7, 3],
+            ops: [
+              // Twin hydraulic lift arms
+              { op: "box", x0: 3, y0: -2, z0: 0, x1: 4, y1: 0, z1: 7, color: "catYellow", mirrorX: true },
+              { op: "box", x0: 2, y0: 0, z0: 1, x1: 3, y1: 1, z1: 6, color: "steelLight", mirrorX: true },
+              // Wide heavy-duty curved steel scoop bucket with teeth
+              { op: "box", x0: -6, y0: -5, z0: 6, x1: 6, y1: 0, z1: 8, color: "steel" },
+              { op: "box", x0: -6, y0: -5, z0: 7, x1: 6, y1: -4, z1: 11, color: "steel" },
+              { op: "box", x0: 5, y0: -5, z0: 6, x1: 6, y1: 0, z1: 11, color: "steel", mirrorX: true },
+              { op: "box", x0: -5, y0: -5, z0: 11, x1: 5, y1: -4, z1: 12, color: "steelLight" },
+            ],
+          },
+          {
+            name: "loader-beacon",
+            kind: "spinY",
+            speed: 6.2,
+            pivot: [0, 15.5, 0],
+            ops: [
+              { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 0, y1: 2, radius: 1.1, color: "amber", emit: 1.7 },
+            ],
+          },
+          {
+            name: "front-axle",
+            kind: "wheel",
+            speed: 0.85,
+            pivot: [0, 3.2, 4.5],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 3.2, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.5, color: "catYellow", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle",
+            kind: "wheel",
+            speed: 0.85,
+            pivot: [0, 3.2, -6.8],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 3.2, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.5, color: "catYellow", mirrorX: true },
+            ],
+          },
+        ],
+      }),
+  },
+
+  "maquina-retroescavadeira": {
+    id: "maquina-retroescavadeira",
+    categoryId: "maquinas",
+    name: "Retroescavadeira",
+    description: "Retroescavadeira amarela completa com pá frontal, cabine panorâmica e braço escavador traseiro animado.",
+    meta: "Máquina Pesada · Anda na estrada",
+    kind: "creation",
+    behaviorHint: "vehicle_route",
+    speed: 3.5,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Retroescavadeira",
+        description: "Retroescavadeira amarela com pá frontal e braço escavador articulado rodando pelas estradas.",
+        category: "vehicle",
+        scaleClass: "medium",
+        palette: {
+          catYellow: "#f2b718",
+          catDark: "#c78e0a",
+          steel: "#2b3038",
+          steelLight: "#768290",
+          glass: "#8bd4ee",
+          amber: "#ff9e16",
+          headlight: "#fff6cc",
+          tire: "#1a1d22",
+        },
+        ops: [
+          // Tractor chassis & engine hood
+          { op: "roundedBox", x0: -4, y0: 3, z0: -6, x1: 4, y1: 7, z1: 8, radius: 0.9, color: "catYellow" },
+          { op: "box", x0: -4, y0: 2, z0: -8, x1: 4, y1: 5, z1: -5, color: "steel" },
+          // Vertical exhaust + headlights
+          { op: "box", x0: 2, y0: 7, z0: 4, x1: 3, y1: 12, z1: 5, color: "steel" },
+          { op: "box", x0: 2, y0: 5, z0: 8, x1: 4, y1: 6, z1: 9, color: "headlight", emit: 1.5, mirrorX: true },
+          // Panoramic glass cab
+          { op: "hollowBox", x0: -4, y0: 7, z0: -5, x1: 4, y1: 13, z1: 2, wall: 1, color: "steel" },
+          { op: "box", x0: -3, y0: 8, z0: -4, x1: 3, y1: 12, z1: 3, color: "glass" },
+          { op: "box", x0: -5, y0: 13, z0: -6, x1: 5, y1: 14, z1: 3, color: "catYellow" },
+          // Front loader bucket in travel stance
+          { op: "box", x0: 3, y0: 4, z0: 5, x1: 4, y1: 6, z1: 10, color: "catDark", mirrorX: true },
+          { op: "box", x0: -5, y0: 2, z0: 10, x1: 5, y1: 6, z1: 12, color: "steel" },
+          { op: "box", x0: -5, y0: 2, z0: 12, x1: 5, y1: 3, z1: 14, color: "steelLight" },
+          // Rear stabilizer legs
+          { op: "box", x0: 4, y0: 2, z0: -8, x1: 5, y1: 6, z1: -6, color: "catDark", mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "backhoe-excavator-arm",
+            kind: "swingX",
+            speed: 1.7,
+            amp: 0.24,
+            pivot: [0, 5.5, -7.5],
+            ops: [
+              // Articulated angled rear boom
+              { op: "line", x0: 0, y0: 0, z0: 0, x1: 0, y1: 8, z1: -4, radius: 1, color: "catYellow" },
+              { op: "line", x0: 0, y0: 8, z0: -4, x1: 0, y1: 2, z1: -9, radius: 1, color: "catDark" },
+              { op: "line", x0: 0, y0: 5, z0: -2, x1: 0, y1: 7, z1: -6, radius: 0, color: "steelLight" },
+              // Curved excavator digging bucket
+              { op: "box", x0: -2, y0: -1, z0: -11, x1: 2, y1: 3, z1: -8, color: "steel" },
+              { op: "box", x0: -2, y0: -1, z0: -12, x1: 2, y1: 0, z1: -10, color: "steelLight" },
+            ],
+          },
+          {
+            name: "backhoe-beacon",
+            kind: "spinY",
+            speed: 6.2,
+            pivot: [0, 14.5, -1],
+            ops: [
+              { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 0, y1: 2, radius: 1.0, color: "amber", emit: 1.7 },
+            ],
+          },
+          {
+            name: "front-axle",
+            kind: "wheel",
+            speed: 1.0,
+            pivot: [0, 2.2, 6],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 6, cy: 0, cz: 0, radius: 2.2, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 5, x1: 6, cy: 0, cz: 0, radius: 1.0, color: "catYellow", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle",
+            kind: "wheel",
+            speed: 0.78,
+            pivot: [0, 3.2, -3.5],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 3.2, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.5, color: "catYellow", mirrorX: true },
+            ],
+          },
+        ],
+      }),
+  },
+
+  "maquina-basculante": {
+    id: "maquina-basculante",
+    categoryId: "maquinas",
+    name: "Caminhão Basculante",
+    description: "Caminhão pesado de obra com caçamba carregada, grade cromada e giroflex âmbar.",
+    meta: "Máquina Pesada · Anda na estrada",
+    kind: "creation",
+    behaviorHint: "vehicle_route",
+    speed: 4.1,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Caminhão Basculante",
+        description: "Caminhão basculante pesado transportando terra e brita pelas estradas da ilha.",
+        category: "vehicle",
+        scaleClass: "medium",
+        palette: {
+          yellow: "#f0ad1a",
+          steel: "#3a424d",
+          chrome: "#dce5ee",
+          glass: "#82cce8",
+          gravel: "#8c7a66",
+          amber: "#ff9e16",
+          headlight: "#fff4c2",
+          tire: "#1b1e24",
+        },
+        ops: [
+          // Heavy truck chassis & forward cab
+          { op: "box", x0: -5, y0: 2, z0: -13, x1: 5, y1: 4, z1: 12, color: "steel" },
+          { op: "roundedBox", x0: -5, y0: 4, z0: 4, x1: 5, y1: 11, z1: 12, radius: 1.0, color: "yellow" },
+          { op: "box", x0: -4, y0: 7, z0: 6, x1: 4, y1: 10, z1: 13, color: "glass" },
+          { op: "box", x0: -4, y0: 4, z0: 12, x1: 4, y1: 6, z1: 13, color: "chrome" },
+          { op: "box", x0: 3, y0: 4, z0: 11, x1: 5, y1: 5, z1: 13, color: "headlight", emit: 1.5, mirrorX: true },
+          // Reinforced dump bed + gravel mound
+          { op: "hollowBox", x0: -6, y0: 4, z0: -13, x1: 6, y1: 10, z1: 3, wall: 1, color: "yellow", trim: "steel" },
+          { op: "box", x0: -6, y0: 10, z0: 2, x1: 6, y1: 12, z1: 5, color: "yellow" },
+          { op: "sphere", cx: 0, cy: 9.5, cz: -5, rx: 4.8, ry: 2.2, rz: 6.5, color: "gravel" },
+          { op: "clear", x0: 4, y0: 0, z0: 5, x1: 7, y1: 5, z1: 11, mirrorX: true },
+          { op: "clear", x0: 4, y0: 0, z0: -11, x1: 7, y1: 5, z1: -3, mirrorX: true },
+        ],
+        parts: [
+          {
+            name: "dump-beacon",
+            kind: "spinY",
+            speed: 6.0,
+            pivot: [0, 12.2, 8],
+            ops: [
+              { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 0, y1: 2, radius: 1.0, color: "amber", emit: 1.7 },
+            ],
+          },
+          {
+            name: "front-axle",
+            kind: "wheel",
+            speed: 0.95,
+            pivot: [0, 2.5, 8],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 2.5, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle-1",
+            kind: "wheel",
+            speed: 0.95,
+            pivot: [0, 2.5, -5.5],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 2.5, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
+            ],
+          },
+          {
+            name: "rear-axle-2",
+            kind: "wheel",
+            speed: 0.95,
+            pivot: [0, 2.5, -10],
+            ops: [
+              { op: "cylinder", axis: "x", x0: 4, x1: 7, cy: 0, cz: 0, radius: 2.5, color: "tire", mirrorX: true },
+              { op: "cylinder", axis: "x", x0: 6, x1: 7, cy: 0, cz: 0, radius: 1.2, color: "chrome", mirrorX: true },
             ],
           },
         ],
@@ -1652,6 +2470,7 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
           soil: "#7d5838",
           wood: "#8f5c30",
           vine: "#4d9e44",
+          vineLight: "#76cf64",
           grape: "#76389c",
           barrel: "#a86c3a",
           iron: "#3a3e46",
@@ -1662,11 +2481,446 @@ export const CATALOG_PRESETS: Record<string, CatalogPresetSpec> = {
             { op: "box", x0: -7, y0: 1, z0: rz, x1: -6, y1: 6, z1: rz + 1, color: "wood" },
             { op: "box", x0: 5, y0: 1, z0: rz, x1: 6, y1: 6, z1: rz + 1, color: "wood" },
             { op: "box", x0: -7, y0: 4, z0: rz, x1: 6, y1: 6, z1: rz + 1, color: "vine" },
+            { op: "box", x0: -6, y0: 6, z0: rz, x1: 5, y1: 7, z1: rz + 1, color: "vineLight" },
             { op: "box", x0: -4, y0: 3, z0: rz, x1: -2, y1: 5, z1: rz + 1, color: "grape" },
             { op: "box", x0: 1, y0: 3, z0: rz, x1: 3, y1: 5, z1: rz + 1, color: "grape" },
           ]),
           { op: "cylinder", axis: "y", cx: -8, cz: 5, y0: 1, y1: 5, radius: 1.6, color: "barrel" },
           { op: "ring", axis: "y", cx: -8, cz: 5, y0: 2, y1: 3, outerR: 1.7, innerR: 1.4, color: "iron" },
+        ],
+      }),
+  },
+
+  "planta-ipe-amarelo": {
+    id: "planta-ipe-amarelo",
+    categoryId: "plantacoes",
+    name: "Ipê Amarelo Florido",
+    description: "Árvore escultural de copa dourada cheia de flores e pétalas caídas sobre o gramado.",
+    meta: "Planta · Árvore Ornamental",
+    kind: "creation",
+    behaviorHint: "landmark",
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Ipê Amarelo Florido",
+        description: "Ipê amarelo exuberante com copa dourada em camadas e tapete de flores no chão.",
+        category: "prop",
+        scaleClass: "medium",
+        palette: {
+          bark: "#6b472b",
+          barkDark: "#4a2f1a",
+          gold: "#f7c825",
+          goldLight: "#ffe46b",
+          goldDeep: "#e09c14",
+          grass: "#5eb24d",
+          leaf: "#499c42",
+        },
+        ops: [
+          // Natural mossy mound & fallen golden petals
+          { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 0, y1: 1, radius: 6.5, color: "grass" },
+          { op: "box", x0: -4, y0: 1, z0: 2, x1: -2, y1: 2, z1: 4, color: "goldLight" },
+          { op: "box", x0: 2, y0: 1, z0: -3, x1: 4, y1: 2, z1: -1, color: "gold" },
+          { op: "box", x0: 3, y0: 1, z0: 2, x1: 5, y1: 2, z1: 3, color: "goldLight" },
+          // Sculpted roots & branching trunk
+          { op: "box", x0: -2, y0: 1, z0: -2, x1: 2, y1: 3, z1: 2, color: "barkDark" },
+          { op: "box", x0: -1, y0: 2, z0: -1, x1: 1, y1: 11, z1: 1, color: "bark" },
+          { op: "line", x0: 0, y0: 8, z0: 0, x1: 4, y1: 13, z1: 2, radius: 1, color: "bark" },
+          { op: "line", x0: 0, y0: 8, z0: 0, x1: -4, y1: 13, z1: -2, radius: 1, color: "bark" },
+          { op: "line", x0: 0, y0: 9, z0: 0, x1: -2, y1: 14, z1: 3, radius: 1, color: "bark" },
+          // Multi-layered lush golden blossom canopy
+          { op: "sphere", cx: 0, cy: 15, cz: 0, rx: 6.2, ry: 4.2, rz: 6.0, color: "gold" },
+          { op: "sphere", cx: 4, cy: 13.5, cz: 2, rx: 4.0, ry: 3.0, rz: 4.0, color: "goldLight" },
+          { op: "sphere", cx: -4, cy: 13.5, cz: -2, rx: 4.2, ry: 3.1, rz: 4.0, color: "goldDeep" },
+          { op: "sphere", cx: -2, cy: 15.5, cz: 3, rx: 3.6, ry: 2.8, rz: 3.6, color: "goldLight" },
+          { op: "sphere", cx: 2, cy: 17, cz: -1, rx: 3.8, ry: 2.5, rz: 3.6, color: "goldLight" },
+          { op: "box", x0: -3, y0: 1, z0: -4, x1: -1, y1: 3, z1: -2, color: "leaf" },
+        ],
+      }),
+  },
+
+  "planta-jardim-tropical": {
+    id: "planta-jardim-tropical",
+    categoryId: "plantacoes",
+    name: "Jardim Tropical & Palmeiras",
+    description: "Conjunto paisagístico com palmeiras, folhagens exuberantes, hibiscos e lanterna de jardim.",
+    meta: "Planta · Paisagismo",
+    kind: "creation",
+    behaviorHint: "landmark",
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Jardim Tropical & Palmeiras",
+        description: "Jardim tropical ornamentado com palmeiras, samambaias, flores coloridas e pedras naturais.",
+        category: "prop",
+        scaleClass: "medium",
+        palette: {
+          stone: "#b8b4a8",
+          stoneDark: "#8f8b80",
+          trunk: "#94653a",
+          leaf: "#3f9c46",
+          leafLight: "#6cd15e",
+          leafDeep: "#2b7335",
+          hibiscus: "#f25878",
+          birdOfParadise: "#ff9b2e",
+          lamp: "#ffe99e",
+        },
+        ops: [
+          { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 0, y1: 1, radius: 7.2, color: "leafDeep" },
+          { op: "sphere", cx: -4, cy: 1.5, cz: 4, rx: 2.4, ry: 1.6, rz: 2.2, color: "stone" },
+          { op: "sphere", cx: 5, cy: 1.2, cz: -3, rx: 2.0, ry: 1.4, rz: 1.8, color: "stoneDark" },
+          // Curved twin palms
+          { op: "line", x0: -2, y0: 1, z0: -1, x1: -4, y1: 13, z1: -3, radius: 1, color: "trunk" },
+          { op: "line", x0: 2, y0: 1, z0: 1, x1: 4, y1: 10, z1: 2, radius: 1, color: "trunk" },
+          // Frond crowns
+          { op: "sphere", cx: -4, cy: 14, cz: -3, rx: 5.2, ry: 1.8, rz: 5.2, color: "leaf" },
+          { op: "sphere", cx: -4, cy: 15, cz: -3, rx: 3.4, ry: 1.6, rz: 3.4, color: "leafLight" },
+          { op: "sphere", cx: 4, cy: 11, cz: 2, rx: 4.2, ry: 1.6, rz: 4.2, color: "leafLight" },
+          // Lush tropical bushes & blooms
+          { op: "sphere", cx: -1, cy: 2.5, cz: 3, rx: 3.0, ry: 2.0, rz: 2.8, color: "leaf" },
+          { op: "sphere", cx: 3, cy: 2.2, cz: -2, rx: 2.6, ry: 1.8, rz: 2.6, color: "leafLight" },
+          { op: "box", x0: -2, y0: 3, z0: 4, x1: 0, y1: 5, z1: 5, color: "hibiscus" },
+          { op: "box", x0: 2, y0: 3, z0: -2, x1: 4, y1: 5, z1: -1, color: "birdOfParadise" },
+          // Warm garden bollard light
+          { op: "box", x0: 0, y0: 1, z0: 5, x1: 1, y1: 4, z1: 6, color: "stoneDark" },
+          { op: "box", x0: 0, y0: 4, z0: 5, x1: 1, y1: 5, z1: 6, color: "lamp", emit: 1.4 },
+        ],
+      }),
+  },
+
+  // ---------------- 6B. RIOS E LAGOS ----------------
+  "agua-rio": {
+    id: "agua-rio",
+    categoryId: "agua",
+    name: "Rio Cristalino",
+    description: "Rio azul-turquesa com margens naturais e pedras; cada clique cria e estende o curso do rio.",
+    meta: "Água · Clique para traçar o rio",
+    kind: "road",
+    pathKind: "river",
+    buildPreviewBlueprint: () =>
+      makeBlueprint({
+        name: "Rio Cristalino",
+        description: "Trecho de rio cristalino com águas azul-turquesa, margens de areia e pedras lisas.",
+        category: "prop",
+        scaleClass: "medium",
+        palette: {
+          water: "#2faee0",
+          waterLight: "#76dcfa",
+          foam: "#e8fbff",
+          sand: "#d8c498",
+          stone: "#8e969e",
+          grass: "#5cb34d",
+          reed: "#3d8c40",
+        },
+        ops: [
+          { op: "box", x0: -10, y0: 0, z0: -10, x1: 10, y1: 1, z1: 10, color: "grass" },
+          { op: "box", x0: -7, y0: 1, z0: -10, x1: 7, y1: 2, z1: 10, color: "sand" },
+          { op: "box", x0: -5, y0: 1, z0: -10, x1: 5, y1: 2, z1: 10, color: "water", emit: 0.35 },
+          { op: "box", x0: -2, y0: 2, z0: -8, x1: 1, y1: 2, z1: -3, color: "waterLight", emit: 0.4 },
+          { op: "box", x0: 0, y0: 2, z0: 1, x1: 3, y1: 2, z1: 7, color: "waterLight", emit: 0.4 },
+          { op: "box", x0: -1, y0: 2, z0: -1, x1: 1, y1: 2, z1: 1, color: "foam", emit: 0.5 },
+          { op: "sphere", cx: -7, cy: 2, cz: -4, rx: 1.6, ry: 1.2, rz: 1.5, color: "stone" },
+          { op: "sphere", cx: 7, cy: 2, cz: 5, rx: 1.8, ry: 1.3, rz: 1.6, color: "stone" },
+          { op: "box", x0: 7, y0: 2, z0: -6, x1: 8, y1: 6, z1: -5, color: "reed" },
+          { op: "box", x0: -8, y0: 2, z0: 4, x1: -7, y1: 6, z1: 5, color: "reed" },
+        ],
+      }),
+  },
+
+  "agua-riacho": {
+    id: "agua-riacho",
+    categoryId: "agua",
+    name: "Riacho com Pedras",
+    description: "Riacho sereno de águas claras margeado por pedrinhas lisas e vegetação ribeirinha.",
+    meta: "Água · Clique para traçar o riacho",
+    kind: "road",
+    pathKind: "creek",
+    buildPreviewBlueprint: () =>
+      makeBlueprint({
+        name: "Riacho com Pedras",
+        description: "Riacho delicado de água cristalina contornado por pedras lisas e folhagens.",
+        category: "prop",
+        scaleClass: "medium",
+        palette: {
+          water: "#3bc2eb",
+          waterLight: "#8ee6ff",
+          sand: "#cbb88d",
+          stone: "#9ca3ab",
+          grass: "#64b852",
+          flower: "#f598b6",
+        },
+        ops: [
+          { op: "box", x0: -9, y0: 0, z0: -10, x1: 9, y1: 1, z1: 10, color: "grass" },
+          { op: "box", x0: -5, y0: 1, z0: -10, x1: 5, y1: 2, z1: 10, color: "sand" },
+          { op: "box", x0: -3, y0: 1, z0: -10, x1: 3, y1: 2, z1: 10, color: "water", emit: 0.35 },
+          { op: "box", x0: -1, y0: 2, z0: -7, x1: 1, y1: 2, z1: 7, color: "waterLight", emit: 0.45 },
+          { op: "sphere", cx: -5, cy: 2, cz: -5, rx: 1.5, ry: 1.1, rz: 1.5, color: "stone" },
+          { op: "sphere", cx: 5, cy: 2, cz: 2, rx: 1.7, ry: 1.2, rz: 1.5, color: "stone" },
+          { op: "box", x0: 6, y0: 2, z0: -4, x1: 7, y1: 4, z1: -3, color: "flower" },
+        ],
+      }),
+  },
+
+  "agua-lago-natural": {
+    id: "agua-lago-natural",
+    categoryId: "agua",
+    name: "Lago Natural",
+    description: "Lago amplo de águas turquesa cercado por pedras, taboas e espaço perfeito para colocar barcos.",
+    meta: "Lago · Grande · Aceita barcos",
+    kind: "pond",
+    pondRadius: 8.6,
+    buildPreviewBlueprint: () =>
+      makeBlueprint({
+        name: "Lago Natural",
+        description: "Lago natural cristalino cercado por pedras musgosas, vegetação e flores aquáticas.",
+        category: "prop",
+        scaleClass: "large",
+        palette: {
+          water: "#2faee0",
+          waterLight: "#76dcfa",
+          stone: "#a6aca4",
+          sand: "#d8c69e",
+          leaf: "#49a84a",
+          lotus: "#f58eb2",
+          reed: "#41823c",
+        },
+        ops: [
+          { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 0, y1: 2, radius: 9.8, color: "stone" },
+          { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 1, y1: 2, radius: 8.5, color: "sand" },
+          { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 1, y1: 2, radius: 7.6, color: "water", emit: 0.35 },
+          { op: "cylinder", axis: "y", cx: -1, cz: 1, y0: 2, y1: 2, radius: 4.5, color: "waterLight", emit: 0.4 },
+          { op: "cylinder", axis: "y", cx: -3, cz: -2, y0: 2, y1: 3, radius: 1.8, color: "leaf" },
+          { op: "box", x0: -3, y0: 3, z0: -2, x1: -2, y1: 4, z1: -1, color: "lotus" },
+          { op: "cylinder", axis: "y", cx: 3, cz: 2, y0: 2, y1: 3, radius: 1.6, color: "leaf" },
+          { op: "sphere", cx: 8, cy: 2.5, cz: -3, rx: 2.0, ry: 1.6, rz: 1.8, color: "stone" },
+          { op: "box", x0: -8, y0: 2, z0: 4, x1: -7, y1: 7, z1: 5, color: "reed" },
+          { op: "box", x0: -7, y0: 2, z0: 5, x1: -6, y1: 6, z1: 6, color: "reed" },
+        ],
+      }),
+  },
+
+  "agua-lago-vitoria": {
+    id: "agua-lago-vitoria",
+    categoryId: "agua",
+    name: "Lago com Vitórias-Régias",
+    description: "Lago ornamental encantador com flores de lótus rosadas, vitórias-régias e águas brilhantes.",
+    meta: "Lago · Médio · Aceita barcos",
+    kind: "pond",
+    pondRadius: 6.4,
+    buildPreviewBlueprint: () =>
+      makeBlueprint({
+        name: "Lago com Vitórias-Régias",
+        description: "Lago sereno coberto por vitórias-régias, flores de lótus e bordas de pedra.",
+        category: "prop",
+        scaleClass: "medium",
+        palette: {
+          water: "#33b6e6",
+          waterLight: "#82e4ff",
+          stone: "#b5b2a6",
+          leaf: "#49a84a",
+          leafLight: "#76d166",
+          lotus: "#f78ab4",
+          lotusCenter: "#ffe26a",
+        },
+        ops: [
+          { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 0, y1: 2, radius: 8.6, color: "stone" },
+          { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 1, y1: 2, radius: 7.0, color: "water", emit: 0.4 },
+          { op: "cylinder", axis: "y", cx: 0, cz: 0, y0: 2, y1: 2, radius: 3.8, color: "waterLight", emit: 0.45 },
+          { op: "cylinder", axis: "y", cx: -3, cz: 2, y0: 2, y1: 3, radius: 2.0, color: "leaf" },
+          { op: "box", x0: -4, y0: 3, z0: 1, x1: -2, y1: 4, z1: 3, color: "lotus" },
+          { op: "box", x0: -3, y0: 4, z0: 2, x1: -2, y1: 5, z1: 3, color: "lotusCenter" },
+          { op: "cylinder", axis: "y", cx: 3, cz: -2, y0: 2, y1: 3, radius: 1.9, color: "leafLight" },
+          { op: "box", x0: 2, y0: 3, z0: -3, x1: 4, y1: 4, z1: -1, color: "lotus" },
+          { op: "cylinder", axis: "y", cx: 1, cz: 3, y0: 2, y1: 3, radius: 1.5, color: "leaf" },
+        ],
+      }),
+  },
+
+  // ---------------- 6C. BARCOS ----------------
+  "barco-lancha": {
+    id: "barco-lancha",
+    categoryId: "barcos",
+    name: "Lancha Moderna",
+    description: "Lancha esportiva branca e azul-marinho com para-brisa fumê, deck de teca e motor de popa.",
+    meta: "Barco · Navega em rios, lagos e mar",
+    kind: "creation",
+    behaviorHint: "water_float",
+    speed: 3.4,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Lancha Moderna",
+        description: "Lancha esportiva moderna deslizando suavemente pelos rios, lagos e litoral da ilha.",
+        category: "watercraft",
+        scaleClass: "small",
+        palette: {
+          hull: "#f8fafc",
+          navy: "#1f5298",
+          teak: "#c48b52",
+          glass: "#528db0",
+          seat: "#f2e6cf",
+          chrome: "#dce6f0",
+          engine: "#242830",
+          navLight: "#fff4b8",
+        },
+        ops: [
+          // Sleek tapered hull
+          { op: "roundedBox", x0: -4, y0: 0, z0: -10, x1: 4, y1: 3, z1: 6, radius: 1.2, color: "hull" },
+          { op: "box", x0: -4, y0: 1, z0: -10, x1: 4, y1: 2, z1: 8, color: "navy" },
+          { op: "box", x0: -3, y0: 0, z0: 6, x1: 3, y1: 3, z1: 9, color: "hull" },
+          { op: "box", x0: -2, y0: 1, z0: 9, x1: 2, y1: 3, z1: 11, color: "hull" },
+          // Teak deck & open cockpit
+          { op: "box", x0: -3, y0: 3, z0: -9, x1: 3, y1: 4, z1: 6, color: "teak" },
+          { op: "box", x0: -3, y0: 4, z0: -8, x1: 3, y1: 5, z1: -5, color: "seat" },
+          { op: "box", x0: -3, y0: 4, z0: 0, x1: 3, y1: 6, z1: 4, color: "glass" },
+          { op: "box", x0: 3, y0: 4, z0: 4, x1: 4, y1: 5, z1: 9, color: "chrome", mirrorX: true },
+          { op: "box", x0: -1, y0: 3, z0: 10, x1: 1, y1: 4, z1: 11, color: "navLight", emit: 1.4 },
+          // Outboard motor
+          { op: "box", x0: -1, y0: 1, z0: -12, x1: 1, y1: 5, z1: -10, color: "engine" },
+        ],
+      }),
+  },
+
+  "barco-veleiro": {
+    id: "barco-veleiro",
+    categoryId: "barcos",
+    name: "Veleiro Clássico",
+    description: "Veleiro elegante de madeira e casco branco com velas içadas e bandeira tremulando.",
+    meta: "Barco · Navega em rios, lagos e mar",
+    kind: "creation",
+    behaviorHint: "water_float",
+    speed: 2.2,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Veleiro Clássico",
+        description: "Veleiro clássico de casco claro e velas brancas navegando suavemente sobre a água.",
+        category: "watercraft",
+        scaleClass: "medium",
+        palette: {
+          hull: "#f8f5ee",
+          stripe: "#2b6eb8",
+          wood: "#a86d3c",
+          mast: "#7a4c26",
+          sail: "#fffaf0",
+          flag: "#e6443a",
+        },
+        ops: [
+          { op: "roundedBox", x0: -4, y0: 0, z0: -9, x1: 4, y1: 3, z1: 7, radius: 1.3, color: "hull" },
+          { op: "box", x0: -4, y0: 2, z0: -9, x1: 4, y1: 3, z1: 8, color: "stripe" },
+          { op: "box", x0: -2, y0: 1, z0: 7, x1: 2, y1: 3, z1: 11, color: "hull" },
+          { op: "box", x0: -3, y0: 3, z0: -8, x1: 3, y1: 4, z1: 7, color: "wood" },
+          // Tall mast & billowing sails
+          { op: "box", x0: 0, y0: 4, z0: 0, x1: 1, y1: 20, z1: 1, color: "mast" },
+          { op: "box", x0: 0, y0: 6, z0: -7, x1: 1, y1: 7, z1: 1, color: "mast" },
+          { op: "box", x0: 0, y0: 7, z0: -6, x1: 1, y1: 11, z1: 0, color: "sail" },
+          { op: "box", x0: 0, y0: 11, z0: -4, x1: 1, y1: 15, z1: 0, color: "sail" },
+          { op: "box", x0: 0, y0: 15, z0: -2, x1: 1, y1: 18, z1: 0, color: "sail" },
+          // Front jib sail
+          { op: "box", x0: 0, y0: 6, z0: 2, x1: 1, y1: 10, z1: 7, color: "sail" },
+          { op: "box", x0: 0, y0: 10, z0: 2, x1: 1, y1: 14, z1: 4, color: "sail" },
+        ],
+        parts: [
+          {
+            name: "sailboat-flag",
+            kind: "swingY",
+            speed: 3.4,
+            amp: 0.35,
+            pivot: [0.5, 19.5, 0.5],
+            ops: [
+              { op: "box", x0: 0, y0: 0, z0: -3, x1: 1, y1: 1, z1: 0, color: "flag" },
+            ],
+          },
+        ],
+      }),
+  },
+
+  "barco-iate": {
+    id: "barco-iate",
+    categoryId: "barcos",
+    name: "Iate de Luxo",
+    description: "Iate moderno de dois andares com cabine envidraçada, solário e radar giratório no topo.",
+    meta: "Barco · Luxo · Navega na água",
+    kind: "creation",
+    behaviorHint: "water_float",
+    speed: 2.7,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Iate de Luxo",
+        description: "Iate contemporâneo de luxo com salão panorâmico iluminado e radar giratório navegando pela ilha.",
+        category: "watercraft",
+        scaleClass: "medium",
+        palette: {
+          white: "#fafcff",
+          teal: "#2698c4",
+          glass: "#3f6a86",
+          warmGlow: "#ffe69e",
+          teak: "#c48c54",
+          chrome: "#dfe8f0",
+        },
+        ops: [
+          { op: "roundedBox", x0: -5, y0: 0, z0: -12, x1: 5, y1: 4, z1: 8, radius: 1.3, color: "white" },
+          { op: "box", x0: -5, y0: 2, z0: -12, x1: 5, y1: 3, z1: 10, color: "teal" },
+          { op: "box", x0: -3, y0: 1, z0: 8, x1: 3, y1: 4, z1: 12, color: "white" },
+          { op: "box", x0: -4, y0: 4, z0: -11, x1: 4, y1: 5, z1: 8, color: "teak" },
+          // Lower panoramic lounge
+          { op: "roundedBox", x0: -4, y0: 5, z0: -8, x1: 4, y1: 9, z1: 4, radius: 1.0, color: "white" },
+          { op: "box", x0: -4, y0: 6, z0: -6, x1: 4, y1: 8, z1: 5, color: "glass" },
+          { op: "box", x0: -3, y0: 6, z0: -7, x1: 3, y1: 8, z1: -6, color: "warmGlow", emit: 1.1 },
+          // Upper flybridge deck
+          { op: "roundedBox", x0: -3, y0: 9, z0: -5, x1: 3, y1: 12, z1: 2, radius: 0.9, color: "white" },
+          { op: "box", x0: -3, y0: 10, z0: -3, x1: 3, y1: 11, z1: 3, color: "glass" },
+        ],
+        parts: [
+          {
+            name: "yacht-radar",
+            kind: "spinY",
+            speed: 3.2,
+            pivot: [0, 12.5, -1],
+            ops: [
+              { op: "box", x0: 0, y0: 0, z0: 0, x1: 1, y1: 2, z1: 1, color: "chrome" },
+              { op: "box", x0: -2, y0: 2, z0: 0, x1: 3, y1: 3, z1: 1, color: "white" },
+            ],
+          },
+        ],
+      }),
+  },
+
+  "barco-remo": {
+    id: "barco-remo",
+    categoryId: "barcos",
+    name: "Barco a Remo",
+    description: "Barquinho artesanal de madeira com bancos, lanterna acesa na proa e remos animados.",
+    meta: "Barco · Navega em rios e lagos",
+    kind: "creation",
+    behaviorHint: "water_float",
+    speed: 1.6,
+    buildBlueprint: () =>
+      makeBlueprint({
+        name: "Barco a Remo",
+        description: "Barco a remo artesanal de cedro navegando calmamente por lagos e riachos.",
+        category: "watercraft",
+        scaleClass: "small",
+        palette: {
+          cedar: "#a66434",
+          cedarLight: "#cc884e",
+          cedarDark: "#6e3e1c",
+          lantern: "#ffe494",
+        },
+        ops: [
+          { op: "roundedBox", x0: -3, y0: 0, z0: -7, x1: 3, y1: 3, z1: 7, radius: 1.0, color: "cedar" },
+          { op: "clear", x0: -2, y0: 1, z0: -5, x1: 2, y1: 4, z1: 5 },
+          { op: "box", x0: -2, y0: 1, z0: -1, x1: 2, y1: 2, z1: 1, color: "cedarLight" },
+          { op: "box", x0: -2, y0: 1, z0: -5, x1: 2, y1: 2, z1: -3, color: "cedarLight" },
+          { op: "box", x0: -1, y0: 3, z0: 6, x1: 1, y1: 4, z1: 7, color: "lantern", emit: 1.3 },
+        ],
+        parts: [
+          {
+            name: "rowboat-oars",
+            kind: "swingX",
+            speed: 2.2,
+            amp: 0.32,
+            pivot: [0, 2.5, 0],
+            ops: [
+              { op: "box", x0: 3, y0: 0, z0: 0, x1: 8, y1: 1, z1: 1, color: "cedarDark", mirrorX: true },
+              { op: "box", x0: 7, y0: -1, z0: 0, x1: 9, y1: 1, z1: 1, color: "cedarLight", mirrorX: true },
+            ],
+          },
         ],
       }),
   },
@@ -2685,6 +3939,7 @@ export interface SerializedCatalogItem {
   kind: CatalogItemKind;
   isRoad: boolean;
   pathKind?: CatalogPresetSpec["pathKind"];
+  pondRadius?: number;
   behaviorHint?: CatalogPresetSpec["behaviorHint"];
   speed?: number;
   altitude?: number;
@@ -2706,6 +3961,7 @@ export function getSerializedCatalogItems(): SerializedCatalogItem[] {
     kind: preset.kind,
     isRoad: preset.kind === "road",
     ...(preset.pathKind ? { pathKind: preset.pathKind } : {}),
+    ...(typeof preset.pondRadius === "number" ? { pondRadius: preset.pondRadius } : {}),
     ...(preset.behaviorHint ? { behaviorHint: preset.behaviorHint } : {}),
     ...(typeof preset.speed === "number" ? { speed: preset.speed } : {}),
     ...(typeof preset.altitude === "number" ? { altitude: preset.altitude } : {}),

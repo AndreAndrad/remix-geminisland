@@ -7,6 +7,7 @@
 //  - Camera-tracking texel-snapped 4096^2 PCF golden-hour shadows + GTAO + UnrealBloom + ACESFilmic + SMAA
 
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
@@ -1470,7 +1471,47 @@ function buildRibbonSliceData(
   };
 }
 
-function buildMergedRibbonMesh(slices, polyOffset = -1, receiveShadow = true) {
+let sharedRiverWaterMat = null;
+
+function getSharedRiverWaterMaterial(uTimeUniform) {
+  if (!sharedRiverWaterMat) {
+    sharedRiverWaterMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.08,
+      metalness: 0.18,
+      emissive: new THREE.Color("#1474a0"),
+      emissiveIntensity: 0.24,
+      polygonOffset: true,
+      polygonOffsetFactor: -2.6,
+      polygonOffsetUnits: -2.6,
+    });
+    sharedRiverWaterMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uRiverTime = uTimeUniform;
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vRiverWorld;")
+        .replace(
+          "#include <worldpos_vertex>",
+          "#include <worldpos_vertex>\nvRiverWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;",
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nuniform float uRiverTime;\nvarying vec3 vRiverWorld;",
+        )
+        .replace(
+          "#include <emissivemap_fragment>",
+          `#include <emissivemap_fragment>
+          float rw1 = sin(vRiverWorld.x * 1.35 + vRiverWorld.z * 0.92 - uRiverTime * 2.6);
+          float rw2 = cos(vRiverWorld.x * 0.78 - vRiverWorld.z * 1.55 - uRiverTime * 1.9);
+          float rSparkle = smoothstep(0.42, 0.96, (rw1 * rw2) * 0.5 + 0.5);
+          totalEmissiveRadiance += vec3(0.26, 0.62, 0.78) * rSparkle * 0.58;`,
+        );
+    };
+  }
+  return sharedRiverWaterMat;
+}
+
+function buildMergedRibbonMesh(slices, polyOffset = -1, receiveShadow = true, customMaterial = null) {
   if (!slices || slices.length === 0) return null;
   let totalVerts = 0;
   let totalIndices = 0;
@@ -1515,7 +1556,7 @@ function buildMergedRibbonMesh(slices, polyOffset = -1, receiveShadow = true) {
   geo.setIndex(new THREE.BufferAttribute(idxOut, 1));
   geo.computeBoundingSphere();
 
-  const mesh = new THREE.Mesh(geo, getSharedRibbonMaterial(polyOffset));
+  const mesh = new THREE.Mesh(geo, customMaterial || getSharedRibbonMaterial(polyOffset));
   mesh.receiveShadow = receiveShadow;
   mesh.matrixAutoUpdate = false;
   mesh.updateMatrix();
@@ -1525,31 +1566,51 @@ function buildMergedRibbonMesh(slices, polyOffset = -1, receiveShadow = true) {
 
 function buildMeadowTreeMesh(variant = 0) {
   const v = new Vox(700 + variant * 19);
-  v.box(-1, 0, -1, 2, 1, 2, "woodDark");
-  v.box(0, 0, 0, 1, 8, 1, variant % 3 === 1 ? "cream" : "woodDark");
-  if (variant % 3 === 0) {
-    v.sphere(0.5, 11, 0.5, 4.8, 4.2, 4.8, "leaf");
-    v.sphere(2.2, 10, 1.5, 3.0, 2.8, 3.0, "leafLight");
-    v.sphere(-1.8, 9.5, -1.2, 3.2, 2.6, 3.2, "leafDark");
-  } else if (variant % 3 === 1) {
-    v.sphere(0.5, 11.5, 0.5, 4.2, 4.6, 4.2, "#f29cb8");
-    v.sphere(1.8, 10.2, 1.4, 2.8, 2.6, 2.8, "#fbd0df");
+  const style = variant % 4;
+  // Flared natural root flare & sculpted trunk
+  v.box(-1, 0, -1, 2, 1, 2, style === 1 ? "#dfd6c5" : "#5c3f28");
+  v.box(0, 0, 0, 1, 9, 1, style === 1 ? "#ede6d8" : "#6c4b30");
+  if (style === 0) {
+    // Rich multi-tier sunlit oak
+    v.sphere(0.5, 11.4, 0.5, 5.1, 4.4, 5.1, "#38913f");
+    v.sphere(2.5, 10.2, 1.6, 3.3, 3.0, 3.3, "#5ebd52");
+    v.sphere(-2.1, 9.8, -1.4, 3.4, 2.8, 3.4, "#287232");
+    v.sphere(0.4, 13.4, -0.4, 3.2, 2.5, 3.2, "#74cc5e");
+  } else if (style === 1) {
+    // Blooming Sakura / Ipê Rosa
+    v.sphere(0.5, 11.6, 0.5, 4.7, 4.4, 4.7, "#ec86ae");
+    v.sphere(2.2, 10.4, 1.5, 3.1, 2.8, 3.1, "#f9bfd5");
+    v.sphere(-1.9, 10.1, -1.2, 3.0, 2.6, 3.0, "#d96c98");
+    v.sphere(0.6, 13.3, 0.2, 2.6, 2.1, 2.6, "#ffe6f0");
+  } else if (style === 2) {
+    // Golden Ipê Amarelo
+    v.sphere(0.5, 11.4, 0.5, 4.8, 4.2, 4.8, "#f0b92b");
+    v.sphere(2.3, 10.3, 1.4, 3.0, 2.7, 3.0, "#ffd952");
+    v.sphere(-2.0, 10.0, -1.3, 3.1, 2.6, 3.1, "#d99d1c");
+    v.sphere(0.4, 13.1, -0.3, 2.8, 2.2, 2.8, "#ffea85");
   } else {
-    v.cone(0.5, 5, 14, 0.5, 4.2, 0.9, "leafDark");
-    v.cone(0.5, 9, 17, 0.5, 3.1, 0.6, "leaf");
+    // Layered evergreen pine
+    v.cone(0.5, 4, 12, 0.5, 4.6, 1.2, "#246634");
+    v.cone(0.5, 8, 15, 0.5, 3.7, 0.9, "#338442");
+    v.cone(0.5, 12, 18, 0.5, 2.6, 0.4, "#4fa856");
   }
   return buildVoxelMesh(v, { scale: 0.28 });
 }
 
 function buildMeadowBushMesh(variant = 0) {
   const v = new Vox(820 + variant * 23);
-  v.sphere(0, 1.6, 0, 3.2, 2.1, 2.9, variant % 2 === 0 ? "leaf" : "leafDark");
-  v.sphere(2.2, 1.3, 1.2, 2.3, 1.7, 2.1, "leafLight");
+  v.sphere(0, 1.7, 0, 3.4, 2.2, 3.1, variant % 2 === 0 ? "#3d9644" : "#2c7837");
+  v.sphere(2.3, 1.4, 1.3, 2.4, 1.8, 2.2, "#60bd58");
+  v.sphere(-1.9, 1.3, -1.1, 2.1, 1.6, 2.0, "#4ea84d");
   v.clear(-6, -4, -6, 6, 0, 6);
-  const flowerCol = variant % 3 === 0 ? "#f6d55c" : variant % 3 === 1 ? "#ec8db0" : "#faf3e3";
+  const flowerCol =
+    variant % 3 === 0 ? "#ffda47" : variant % 3 === 1 ? "#f485b3" : "#fff9ec";
+  const flowerCol2 = variant % 3 === 0 ? "#ff9e3b" : "#b887f5";
   v.put(-1, 3, 1, flowerCol);
-  v.put(2, 2, 2, flowerCol);
-  v.put(0, 3, -1, flowerCol);
+  v.put(2, 3, 2, flowerCol);
+  v.put(0, 3, -1, flowerCol2);
+  v.put(-2, 2, -1, flowerCol);
+  v.put(1, 2, -2, flowerCol2);
   return buildVoxelMesh(v, { scale: 0.24 });
 }
 
@@ -1980,6 +2041,20 @@ class CreationSimEntity {
       this.dwellingStop = null;
       this.phys.turnState = null;
       this.phys.pendingTurnAtEnd = null;
+    }
+
+    if (b?.type === "water_float" && Array.isArray(b.waypoints) && b.waypoints.length >= 2) {
+      const wVecs = b.waypoints.map((wp) => new THREE.Vector3(wp[0], 0.14, wp[1]));
+      this.waterCurve = new THREE.CatmullRomCurve3(wVecs, false, "centripetal", 0.5);
+      this.waterLength = Math.max(4, this.waterCurve.getLength());
+      if (typeof this.waterDist !== "number") {
+        this.waterDist = Math.min(this.waterLength * 0.25, 2.0);
+        this.waterDir = 1;
+      } else {
+        this.waterDist = Math.max(0.5, Math.min(this.waterLength - 0.5, this.waterDist));
+      }
+    } else {
+      this.waterCurve = null;
     }
 
     if (b?.type === "fly_circle" && Array.isArray(b.waypoints) && b.waypoints.length >= 3) {
@@ -2860,25 +2935,54 @@ class CreationSimEntity {
         }
       }
     } else if (b?.type === "water_float") {
-      this.orbitAngle += ((b.speed || 1.4) / Math.max(2.2, b.radius || 4.0)) * dt;
-      const r = b.radius || 4.0;
-      const nx = b.pondX + Math.cos(this.orbitAngle) * r;
-      const nz = b.pondZ + Math.sin(this.orbitAngle) * r * 0.82;
-      const dx = nx - this.x;
-      const dz = nz - this.z;
-      this.x = nx;
-      this.z = nz;
-      this.y = 0.14 + Math.sin(t * 2.4 + this.orbitAngle) * 0.045;
-      if (Math.hypot(dx, dz) > 0.0005) {
-        this.yaw = Math.atan2(dx, dz);
+      if (this.waterCurve) {
+        const spd = b.speed || 2.5;
+        this.waterDist = (this.waterDist || 0) + spd * (this.waterDir || 1) * dt;
+        const margin = Math.min(1.4, this.waterLength * 0.08);
+        if (this.waterDist >= this.waterLength - margin) {
+          this.waterDist = this.waterLength - margin;
+          this.waterDir = -1;
+        } else if (this.waterDist <= margin) {
+          this.waterDist = margin;
+          this.waterDir = 1;
+        }
+        const u = Math.max(0.01, Math.min(0.99, this.waterDist / this.waterLength));
+        const pos = this.waterCurve.getPointAt(u);
+        const tan = this.waterCurve.getTangentAt(u);
+        const dirSign = this.waterDir || 1;
+        const desiredYaw = Math.atan2(tan.x * dirSign, tan.z * dirSign);
+        let dyaw = desiredYaw - this.yaw;
+        while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+        while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+        this.yaw += dyaw * Math.min(1, dt * 6.5);
+        this.x = pos.x;
+        this.z = pos.z;
+        this.y = 0.14 + Math.sin(t * 2.5 + this.index) * 0.04;
+        rollZ = Math.sin(t * 2.2 + this.index) * 0.048;
+        pitchX = Math.cos(t * 1.9 + this.index) * 0.032;
+        this.moveFactor = 0.85;
+      } else {
+        this.orbitAngle += ((b.speed || 1.4) / Math.max(2.2, b.radius || 4.0)) * dt;
+        const r = b.radius || 4.0;
+        const nx = b.pondX + Math.cos(this.orbitAngle) * r;
+        const nz = b.pondZ + Math.sin(this.orbitAngle) * r * 0.82;
+        const dx = nx - this.x;
+        const dz = nz - this.z;
+        this.x = nx;
+        this.z = nz;
+        const baseWaterY = getIslandInlandMargin(nx, nz) < 0.8 ? -0.46 : 0.14;
+        this.y = baseWaterY + Math.sin(t * 2.4 + this.orbitAngle) * 0.045;
+        if (Math.hypot(dx, dz) > 0.0005) {
+          this.yaw = Math.atan2(dx, dz);
+        }
+        const surfBoost =
+          this.feedReading?.kind === "surf" && typeof this.feedReading.value === "number"
+            ? Math.max(0.7, Math.min(2.2, this.feedReading.value))
+            : 1.0;
+        rollZ = Math.sin(t * 2.1) * 0.05 * surfBoost;
+        pitchX = Math.cos(t * 1.8) * 0.035 * surfBoost;
+        this.moveFactor = 0.7;
       }
-      const surfBoost =
-        this.feedReading?.kind === "surf" && typeof this.feedReading.value === "number"
-          ? Math.max(0.7, Math.min(2.2, this.feedReading.value))
-          : 1.0;
-      rollZ = Math.sin(t * 2.1) * 0.05 * surfBoost;
-      pitchX = Math.cos(t * 1.8) * 0.035 * surfBoost;
-      this.moveFactor = 0.7;
     } else if (b?.type === "fly_circle") {
       if (this.flightCurve) {
         this.flightDist = (this.flightDist + (b.speed || 6.4) * dt) % this.flightLength;
@@ -3158,7 +3262,17 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 1.12;
+
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTex;
+    scene.environmentIntensity = 0.42;
+    pmrem.dispose();
+  } catch {
+    // Graceful fallback if PMREM is unavailable
+  }
 
   const BASE_FRUSTUM = 34;
   const aspect0 = w0 / h0;
@@ -3228,7 +3342,7 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
   const SUN_OFFSET = new THREE.Vector3(64, 118, 76);
   const SHADOW_HALF = 86;
   const SHADOW_RES = isSoftwareGpu ? 1024 : isLowTierGpu ? 2048 : 4096;
-  const sun = new THREE.DirectionalLight(0xfff3db, 2.25);
+  const sun = new THREE.DirectionalLight(0xfff6e2, 2.35);
   sun.position.copy(SUN_OFFSET);
   sun.castShadow = true;
   sun.shadow.mapSize.set(SHADOW_RES, SHADOW_RES);
@@ -3244,10 +3358,10 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
   scene.add(sun);
   scene.add(sun.target);
 
-  const hemi = new THREE.HemisphereLight(0xeef7ff, 0x6ea44c, 1.12);
+  const hemi = new THREE.HemisphereLight(0xe2f3ff, 0x68a84b, 1.18);
   scene.add(hemi);
 
-  const rim = new THREE.DirectionalLight(0xffe7c2, 0.35);
+  const rim = new THREE.DirectionalLight(0xd2e9ff, 0.42);
   rim.position.set(-85, 70, -90);
   scene.add(rim);
 
@@ -3287,18 +3401,23 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
   // Scattered scenic perimeter Meadow Groves + Coastal Shoreline Boulders (batched into 1 static mesh)
   const perimeterTreesGroup = new THREE.Group();
   scene.add(perimeterTreesGroup);
-  const treeProtos = [buildMeadowTreeMesh(0), buildMeadowTreeMesh(1), buildMeadowTreeMesh(2)];
+  const treeProtos = [
+    buildMeadowTreeMesh(0),
+    buildMeadowTreeMesh(1),
+    buildMeadowTreeMesh(2),
+    buildMeadowTreeMesh(3),
+  ];
   const bushProtos = [buildMeadowBushMesh(0), buildMeadowBushMesh(1), buildMeadowBushMesh(2)];
   const rockProtos = [buildCoastalRockMesh(0), buildCoastalRockMesh(1), buildCoastalRockMesh(2)];
   const perimeterScenery = [];
-  for (let i = 0; i < 46; i++) {
+  for (let i = 0; i < 48; i++) {
     const r = 44 + ((i * 19) % 92);
     const ang = i * 2.399963 + 0.4;
     const tx = Math.cos(ang) * r;
     const tz = Math.sin(ang) * r;
     if (getIslandInlandMargin(tx, tz) >= 6.5) {
       perimeterScenery.push({
-        mesh: treeProtos[i % 3],
+        mesh: treeProtos[i % 4],
         x: tx,
         y: 0,
         z: tz,
@@ -3408,6 +3527,28 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
       gv.put(0, 1, 0, "#f6d55c");
     }
     return buildVoxelMesh(gv, { scale: 0.16, castShadow: false, depthLayer: 1 });
+  });
+
+  const riverBankProtos = [0, 1, 2].map((variant) => {
+    const rv = new Vox(650 + variant * 17);
+    if (variant === 0) {
+      rv.box(-2, 0, -1, 1, 1, 1, "#b4aea0");
+      rv.put(0, 1, 0, "#d2cbb8");
+      rv.put(2, 0, 0, "#66a34d");
+    } else if (variant === 1) {
+      // Cattail reeds along the riverbank
+      rv.box(-1, 0, -1, 1, 1, 1, "#559445");
+      rv.box(0, 1, 0, 0, 5, 0, "#3b8a3e");
+      rv.put(0, 6, 0, "#7c4c28");
+      rv.box(-1, 1, 1, -1, 4, 1, "#52a84c");
+      rv.put(1, 1, -1, "#9aa29c");
+    } else {
+      // Mossy boulders & golden shore blossoms
+      rv.box(-2, 0, -2, 1, 2, 1, "#939a96");
+      rv.put(-1, 2, 0, "#68a852");
+      rv.put(1, 1, 1, "#f7d55c");
+    }
+    return buildVoxelMesh(rv, { scale: 0.2, castShadow: false, depthLayer: 1 });
   });
 
   const pathsGroup = new THREE.Group();
@@ -4080,6 +4221,7 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
       arr.push(slice);
     };
     const dashTransforms = [];
+    const riverWaterSlices = [];
     const pathVoxLayer1NoShadow = [];
     const pathVoxLayer2NoShadow = [];
     const pathVoxLayer2PlankShadow = [];
@@ -4276,6 +4418,42 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
             rotY: Math.atan2(tan.x, tan.z) + (((i % 3) - 1) * 0.15),
           });
         }
+      } else if (p.kind === "river" || p.kind === "creek") {
+        // Crystalline shimmering turquoise river or stone-lined creek with lush mossy banks & cattail reeds
+        const isWideRiver = p.kind === "river";
+        const zBias = Math.min(20, pIdx) * 0.00025;
+        const bankHalf = isWideRiver ? 2.95 : 1.72;
+        const mossHalf = isWideRiver ? 2.48 : 1.44;
+        const waterHalf = isWideRiver ? 2.12 : 1.18;
+        pushRibbon(-1, buildRibbonSliceData(curve, samples, bankHalf, 0.042 - zBias, "#c9be97", true));
+        pushRibbon(-1.6, buildRibbonSliceData(curve, samples, mossHalf, 0.056 - zBias, "#6ea655", true));
+        riverWaterSlices.push(
+          buildRibbonSliceData(
+            curve,
+            samples,
+            waterHalf,
+            (isWideRiver ? 0.095 : 0.088) - zBias,
+            isWideRiver ? "#2eb4e6" : "#4cc8ed",
+            true,
+          ),
+        );
+        const bankCount = Math.max(3, Math.floor(len / (isWideRiver ? 2.5 : 1.9)));
+        for (let i = 1; i < bankCount; i++) {
+          const u = i / bankCount;
+          const pt = curve.getPointAt(u);
+          const tan = curve.getTangentAt(u);
+          const side = i % 2 === 0 ? 1 : -1;
+          const nx = -tan.z * side;
+          const nz = tan.x * side;
+          const offset = isWideRiver ? 2.52 : 1.46;
+          pathVoxLayer1NoShadow.push({
+            mesh: riverBankProtos[i % riverBankProtos.length],
+            x: pt.x + nx * offset,
+            y: -0.06,
+            z: pt.z + nz * offset,
+            rotY: (i * 1.7) % (Math.PI * 2),
+          });
+        }
       } else {
         // Airy garden stepping flagstones with gentle left/right walking rhythm
         const stoneCount = Math.max(2, Math.floor(len / 1.22));
@@ -4303,6 +4481,16 @@ export function createMeadowWorldEngine(canvas, callbacks = {}, options = {}) {
     for (const [polyOffset, slices] of ribbonBuckets.entries()) {
       const mergedRibbon = buildMergedRibbonMesh(slices, polyOffset, true);
       if (mergedRibbon) pathsGroup.add(mergedRibbon);
+    }
+
+    if (riverWaterSlices.length > 0) {
+      const mergedRivers = buildMergedRibbonMesh(
+        riverWaterSlices,
+        -2.6,
+        true,
+        getSharedRiverWaterMaterial(grassUniforms.uTime),
+      );
+      if (mergedRivers) pathsGroup.add(mergedRivers);
     }
 
     const totalDashes = dashTransforms.length >> 2;

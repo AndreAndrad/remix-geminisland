@@ -512,11 +512,11 @@ let sharedPondWaterMat = null;
 function getSharedPondWaterMaterial() {
   if (!sharedPondWaterMat) {
     sharedPondWaterMat = new THREE.MeshStandardMaterial({
-      color: "#4daee0",
-      roughness: 0.18,
-      metalness: 0.08,
-      emissive: new THREE.Color("#1a5b7d"),
-      emissiveIntensity: 0.16,
+      color: "#33b5e6",
+      roughness: 0.09,
+      metalness: 0.16,
+      emissive: new THREE.Color("#136c96"),
+      emissiveIntensity: 0.24,
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
@@ -534,16 +534,30 @@ function getPondPropProtos(radius) {
   let cached = propProtoCache.get(cacheKey);
   if (!cached) {
     const pondVox = new Vox(77);
-    const rimTones = ["limestone", "concrete", "concrete2", "grass2"];
+    const rimTones = ["#d8cfb8", "#b9b3a3", "#8d928e", "#639e4c"];
     for (let x = -gr - 3; x <= gr + 3; x++) {
       for (let z = -gr - 3; z <= gr + 3; z++) {
         const d = Math.hypot(x, z);
-        if (d >= gr - 0.8 && d <= gr + 2.4) {
-          const h = Math.abs((x * 13 + z * 29) % 7);
-          const col = d > gr + 1.3 && h < 3 ? "grass2" : rimTones[h % 3];
+        const organic = Math.sin(x * 0.42 + z * 0.31) * 0.72;
+        if (d >= gr - 0.85 + organic * 0.35 && d <= gr + 2.55 + organic * 0.5) {
+          const h = Math.abs((x * 13 + z * 29) % 11);
+          const col = d > gr + 1.25 && h < 5 ? "#5b9e49" : rimTones[h % 3];
           pondVox.put(x, 0, z, col);
-          if (d >= gr - 0.2 && d <= gr + 1.1 && h % 3 !== 0) {
+          if (d >= gr - 0.15 && d <= gr + 1.25 && h % 3 !== 0) {
             pondVox.put(x, 1, z, col);
+            if (h === 1 || h === 7) {
+              pondVox.put(x, 2, z, "#9ca3a0");
+            }
+          }
+          // Scenic green cattail reeds & lakeside blossoms clustered organically around the bank
+          if (d >= gr + 0.6 && d <= gr + 1.9 && (h === 2 || h === 8)) {
+            pondVox.put(x, 1, z, "#3b823c");
+            pondVox.put(x, 2, z, "#499c47");
+            pondVox.put(x, 3, z, "#499c47");
+            pondVox.put(x, 4, z, h === 2 ? "#7a4d2c" : "#67b857");
+          } else if (d >= gr + 1.3 && d <= gr + 2.3 && h === 5) {
+            pondVox.put(x, 1, z, "#4f9a44");
+            pondVox.put(x, 2, z, (x + z) % 2 === 0 ? "#f7d55c" : "#f598b8");
           }
         }
       }
@@ -552,18 +566,22 @@ function getPondPropProtos(radius) {
 
     const padVox = new Vox(79);
     const pads = [
-      [-r * 0.38, -r * 0.24, true],
-      [r * 0.34, r * 0.28, false],
-      [-r * 0.14, r * 0.44, true],
-      [r * 0.4, -r * 0.18, false],
+      [-r * 0.38, -r * 0.24, "#f58db4"],
+      [r * 0.34, r * 0.28, null],
+      [-r * 0.14, r * 0.44, "#fff6f9"],
+      [r * 0.4, -r * 0.18, "#f59cc0"],
+      [-r * 0.44, r * 0.14, null],
+      [r * 0.14, -r * 0.42, "#ffd769"],
     ];
-    for (const [lx, lz, hasFlower] of pads) {
+    for (const [lx, lz, flowerCol] of pads) {
       const gx = Math.round(lx / s);
       const gz = Math.round(lz / s);
-      padVox.cylinderAxis("y", gx, gz, 1, 2, 2.4, "leaf");
-      if (hasFlower) {
-        padVox.box(gx - 1, 2, gz, gx + 1, 3, gz + 1, "#f598b6");
-        padVox.put(gx, 3, gz, "yellow");
+      padVox.cylinderAxis("y", gx, gz, 1, 2, 2.6, "#3a9a4a");
+      padVox.cylinderAxis("y", gx, gz, 1, 2, 1.5, "#55b85d");
+      if (flowerCol) {
+        padVox.box(gx - 1, 2, gz, gx + 1, 3, gz + 1, flowerCol);
+        padVox.box(gx, 2, gz - 1, gx, 3, gz + 1, flowerCol);
+        padVox.put(gx, 3, gz, "#ffd95e");
       }
     }
     const padMesh = buildVoxelMesh(padVox, { scale: s, castShadow: false });
@@ -638,18 +656,23 @@ function getStandardPropProtoMesh(prop) {
   let m = propProtoCache.get(key);
   if (!m) {
     const v = new Vox(91 + variant * 17);
-    const blossoms = ["#f6d55c", "#ec8db0", "#fcfaf5", "#ffb642"];
+    const blossoms = ["#ffda47", "#f47fb0", "#fff9f0", "#ff9d3b", "#b685f4", "#ff6d6d"];
     const b1 = blossoms[variant % blossoms.length];
-    const b2 = blossoms[(variant + 1) % blossoms.length];
-    v.sphere(0, 1.1, 0, 2.6, 1.4, 2.3, "leaf");
-    v.sphere(2.1, 0.9, 1.1, 1.9, 1.2, 1.8, "leafLight");
-    v.sphere(-1.8, 0.8, 0.9, 1.6, 1.1, 1.6, "leafDark");
+    const b2 = blossoms[(variant + 2) % blossoms.length];
+    const b3 = blossoms[(variant + 4) % blossoms.length];
+    v.sphere(0, 1.3, 0, 2.8, 1.6, 2.5, "#3e9c46");
+    v.sphere(2.2, 1.1, 1.2, 2.1, 1.4, 2.0, "#62bd58");
+    v.sphere(-2.0, 1.0, 1.0, 1.9, 1.3, 1.8, "#2e7f3a");
+    v.sphere(0.4, 1.1, -1.7, 1.8, 1.2, 1.7, "#4ea84f");
     v.clear(-6, -4, -6, 6, 0, 6);
-    v.put(-1, 2, 0, b1);
-    v.put(0, 2, 1, b1);
+    v.put(-1, 3, 0, b1);
+    v.put(0, 3, 1, b1);
+    v.put(1, 2, -1, b3);
     v.put(2, 2, 1, b2);
-    v.put(-2, 1, 1, b2);
-    m = buildVoxelMesh(v, { scale: 0.22 });
+    v.put(3, 2, 2, b2);
+    v.put(-2, 2, 1, b3);
+    v.put(0, 2, -2, b1);
+    m = buildVoxelMesh(v, { scale: 0.23 });
     propProtoCache.set(key, m);
   }
   return m;

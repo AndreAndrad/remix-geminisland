@@ -497,8 +497,9 @@ function updateCatalogPickLabel() {
   }
   const countSuffix = catalogPlacedCount > 0 ? ` (${catalogPlacedCount})` : "";
   if (pendingCatalogPreset.isRoad) {
+    const segLabel = pendingCatalogPreset.isWater ? "continuar o rio" : "continuar a pista";
     catalogPickLabel.textContent = pendingRoadStart
-      ? `${pendingCatalogPreset.name}${countSuffix} · Clique para continuar a pista`
+      ? `${pendingCatalogPreset.name}${countSuffix} · Clique para ${segLabel}`
       : `${pendingCatalogPreset.name} · Clique no mapa para adicionar`;
     return;
   }
@@ -513,12 +514,14 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
     worldData = {
       version: 1,
       paths: [],
+      props: [],
       creations: [],
       villagers: [],
       myCreationId,
     };
   }
   if (!Array.isArray(worldData.paths)) worldData.paths = [];
+  if (!Array.isArray(worldData.props)) worldData.props = [];
   if (!Array.isArray(worldData.creations)) worldData.creations = [];
   if (!Array.isArray(worldData.villagers)) worldData.villagers = [];
 
@@ -532,7 +535,20 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
   let anchorZ = pz;
   let placedName = srv.name || preset.name;
 
-  if (srv.kind === "road" || preset.isRoad) {
+  if (srv.kind === "pond") {
+    worldData.props = [
+      ...worldData.props,
+      {
+        id: `local-pond-${uid}`,
+        kind: "pond",
+        x: px,
+        z: pz,
+        yaw: Number(((now % 628) / 100).toFixed(2)),
+        radius: srv.pondRadius || 7.2,
+      },
+    ];
+  } else if (srv.kind === "road" || preset.isRoad) {
+    const isWaterPath = srv.pathKind === "river" || srv.pathKind === "creek";
     const hasSecond =
       typeof x2 === "number" && Number.isFinite(x2) && typeof z2 === "number" && Number.isFinite(z2);
     let p0x = px;
@@ -547,15 +563,16 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
         p1z = Number(clampCoord(p0z + 3).toFixed(2));
       }
     } else {
-      p0x = Number(clampCoord(px - 7).toFixed(2));
-      p1x = Number(clampCoord(px + 7).toFixed(2));
+      const halfLen = isWaterPath ? 9.5 : 7;
+      p0x = Number(clampCoord(px - halfLen).toFixed(2));
+      p1x = Number(clampCoord(px + halfLen).toFixed(2));
     }
     const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
     const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
     worldData.paths = [
       ...worldData.paths,
       {
-        id: `local-road-${uid}`,
+        id: `local-${isWaterPath ? "water" : "road"}-${uid}`,
         kind: srv.pathKind || "road",
         points: [
           [p0x, p0z],
@@ -565,8 +582,8 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
         closed: false,
       },
     ];
-    anchorX = hasSecond ? p1x : midX;
-    anchorZ = hasSecond ? p1z : midZ;
+    anchorX = p1x;
+    anchorZ = p1z;
   } else if (srv.kind === "villager" && srv.villagerSpec) {
     const names = ["Lucas", "Marina", "Gabriel", "Sofia", "Pedro", "Clara", "Mateus", "Beatriz"];
     const baseName = names[worldData.villagers.length % names.length];
@@ -605,22 +622,126 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
       activity: "landmark",
       statusLine: bp.description || srv.description,
     };
+
+    const findNearestPath = (kinds) => {
+      let bestPath = null;
+      let bestDist = Infinity;
+      let bestPtIdx = 0;
+      for (const p of worldData.paths) {
+        if (!kinds.has(p.kind) || !Array.isArray(p.points) || p.points.length < 2) continue;
+        for (let i = 0; i < p.points.length; i++) {
+          const d = Math.hypot(p.points[i][0] - px, p.points[i][1] - pz);
+          if (d < bestDist) {
+            bestDist = d;
+            bestPath = p;
+            bestPtIdx = i;
+          }
+        }
+      }
+      return { path: bestPath, dist: bestDist, ptIdx: bestPtIdx };
+    };
+
     if (srv.behaviorHint === "vehicle_route") {
-      const loopR = 9;
-      const wps = [
-        [px, pz],
-        [clampCoord(px + loopR), clampCoord(pz + loopR * 0.4)],
-        [clampCoord(px + loopR * 0.4), clampCoord(pz + loopR)],
-        [clampCoord(px - loopR * 0.5), clampCoord(pz + loopR * 0.5)],
-      ];
-      behavior = {
-        type: "vehicle_route",
-        speed: srv.speed ?? 5.2,
-        waypoints: wps,
-        stops: [],
-        loopMode: "loop",
-        statusLine: bp.description || srv.description,
-      };
+      const asphaltHit = findNearestPath(new Set(["road"]));
+      const anyRoadHit = findNearestPath(new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]));
+      const chosen =
+        anyRoadHit.path && anyRoadHit.dist <= 14 && anyRoadHit.dist + 2 < asphaltHit.dist
+          ? anyRoadHit
+          : asphaltHit.path
+            ? asphaltHit
+            : anyRoadHit;
+      if (chosen.path) {
+        const isClosed = Boolean(chosen.path.closed) && chosen.path.points.length >= 4;
+        const pts = chosen.path.points;
+        const wps = isClosed
+          ? pts.map((_, idx) => {
+              const pt = pts[(idx + chosen.ptIdx) % pts.length];
+              return [pt[0], pt[1]];
+            })
+          : chosen.ptIdx > pts.length / 2
+            ? [...pts].reverse().map(([wx, wz]) => [wx, wz])
+            : pts.map(([wx, wz]) => [wx, wz]);
+        finalX = wps[0][0];
+        finalZ = wps[0][1];
+        behavior = {
+          type: "vehicle_route",
+          speed: srv.speed ?? 5.6,
+          waypoints: wps,
+          stops: [],
+          loopMode: isClosed ? "loop" : "pingpong",
+          statusLine: bp.description || srv.description,
+        };
+      } else {
+        const loopR = 9;
+        const wps = [
+          [px, pz],
+          [clampCoord(px + loopR), clampCoord(pz + loopR * 0.4)],
+          [clampCoord(px + loopR * 0.4), clampCoord(pz + loopR)],
+          [clampCoord(px - loopR * 0.5), clampCoord(pz + loopR * 0.5)],
+        ];
+        behavior = {
+          type: "vehicle_route",
+          speed: srv.speed ?? 5.2,
+          waypoints: wps,
+          stops: [],
+          loopMode: "loop",
+          statusLine: bp.description || srv.description,
+        };
+      }
+    } else if (srv.behaviorHint === "water_float") {
+      const riverHit = findNearestPath(new Set(["river", "creek"]));
+      let nearestPond = null;
+      let nearestPondDist = Infinity;
+      for (const pr of worldData.props) {
+        if (pr.kind !== "pond") continue;
+        const d = Math.hypot(pr.x - px, pr.z - pz) - (pr.radius || 6.4);
+        if (d < nearestPondDist) {
+          nearestPondDist = d;
+          nearestPond = pr;
+        }
+      }
+      if (riverHit.path && riverHit.dist <= 22 && riverHit.dist <= nearestPondDist + 6) {
+        const wps = riverHit.path.points.map(([wx, wz]) => [wx, wz]);
+        finalX = wps[0][0];
+        finalZ = wps[0][1];
+        behavior = {
+          type: "water_float",
+          speed: srv.speed ?? 2.6,
+          pondX: wps[0][0],
+          pondZ: wps[0][1],
+          radius: 3.5,
+          waypoints: wps,
+          statusLine: bp.description || srv.description,
+        };
+      } else if (nearestPond && nearestPondDist <= 18) {
+        const orbitR = Math.max(1.8, (nearestPond.radius || 6.4) * 0.52);
+        finalX = Number((nearestPond.x + orbitR).toFixed(2));
+        finalZ = nearestPond.z;
+        behavior = {
+          type: "water_float",
+          speed: srv.speed ?? 2.2,
+          pondX: nearestPond.x,
+          pondZ: nearestPond.z,
+          radius: orbitR,
+          statusLine: bp.description || srv.description,
+        };
+      } else {
+        worldData.props = [
+          ...worldData.props,
+          { id: `local-pond-boat-${uid}`, kind: "pond", x: px, z: pz, yaw: 0, radius: 6.6 },
+        ];
+        const orbitR = 3.2;
+        finalX = Number((px + orbitR).toFixed(2));
+        finalZ = pz;
+        behavior = {
+          type: "water_float",
+          speed: srv.speed ?? 2.2,
+          pondX: px,
+          pondZ: pz,
+          radius: orbitR,
+          statusLine: bp.description || srv.description,
+        };
+      }
     } else if (srv.behaviorHint === "fly_circle") {
       behavior = {
         type: "fly_circle",
@@ -678,7 +799,7 @@ function placeCatalogPresetLocally(preset, x, z, x2, z2) {
   if (preset.isRoad) {
     pendingRoadStart = { x: anchorX, z: anchorZ };
   }
-  const verb = preset.isRoad ? "adicionada" : "adicionado";
+  const verb = preset.isWater ? "criado" : preset.isRoad ? "adicionada" : "adicionado";
   showToast(`${placedName} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
   return true;
 }
@@ -745,7 +866,7 @@ async function placeCatalogPresetAt(preset, x, z, x2, z2) {
     catalogPlacingInFlight = false;
     updateCatalogPickLabel();
 
-    const verb = preset.isRoad ? "adicionada" : "adicionado";
+    const verb = preset.isWater ? "criado" : preset.isRoad ? "adicionada" : "adicionado";
     showToast(`${data.name || preset.name} ${verb}! Clique em outro ponto para adicionar mais.`, 2800);
   } catch {
     if (!placeCatalogPresetLocally(preset, x, z, x2, z2)) {

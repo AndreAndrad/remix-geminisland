@@ -1455,7 +1455,7 @@ body[data-walk-mobile="1"] .walk-esc-hint {
   appearance: none;
   border: 1.5px solid var(--border);
   background: var(--white);
-  border-radius: 15px;
+  border-radius: 16px;
   padding: 0;
   text-align: left;
   font: inherit;
@@ -1464,13 +1464,14 @@ body[data-walk-mobile="1"] .walk-esc-hint {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.14s ease;
+  box-shadow: 0 2px 6px rgba(20, 34, 24, 0.04);
+  transition: border-color 0.16s ease, box-shadow 0.18s ease, transform 0.15s ease;
 }
 
 .cat-card:hover {
   border-color: var(--ink);
-  box-shadow: 0 8px 20px rgba(22, 34, 24, 0.08);
-  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(20, 38, 28, 0.11);
+  transform: translateY(-2.5px);
 }
 
 .cat-card:active {
@@ -1479,14 +1480,14 @@ body[data-walk-mobile="1"] .walk-esc-hint {
 
 .cat-card.is-selected {
   border-color: var(--meadow-accent);
-  box-shadow: 0 0 0 1.5px var(--meadow-accent);
+  box-shadow: 0 0 0 1.5px var(--meadow-accent), 0 8px 18px rgba(38, 128, 72, 0.12);
 }
 
 .cat-card-stage {
   position: relative;
   width: 100%;
   aspect-ratio: 14 / 9;
-  background: linear-gradient(180deg, #d8effd 0%, #eef8ff 62%, #d8eecb 100%);
+  background: radial-gradient(circle at 50% 24%, #ffffff 0%, #e6f4ff 52%, #cbe9c6 100%);
   border-bottom: 1px solid rgba(22, 27, 24, 0.07);
   display: flex;
   align-items: center;

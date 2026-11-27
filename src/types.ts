@@ -184,6 +184,7 @@ export type CreationBehavior =
       pondX: number;
       pondZ: number;
       radius: number;
+      waypoints?: [number, number][];
       statusLine: string;
     }
   | {
@@ -228,7 +229,9 @@ export type PathKind =
   | "dirt_trail"
   | "cobblestone"
   | "boardwalk"
-  | "volcanic_trail";
+  | "volcanic_trail"
+  | "river"
+  | "creek";
 
 export interface WorldPath {
   id: string;

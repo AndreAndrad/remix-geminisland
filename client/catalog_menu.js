@@ -1,8 +1,9 @@
-// Interactive Construction Menu Controller (12 categories in Portuguese)
+// Interactive Construction Menu Controller (15 categories in Portuguese, 76 presets)
 // Features live animated 3D voxel & villager previews rendered via ONE shared offscreen WebGLRenderer
 // (0% GPU/CPU when closed) and 1-click selection straight into continuous map placement.
 
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { buildCreationGroup } from "./voxel/vox.js";
 import { buildVillagerRig } from "./voxel/villagers.js";
 import BUNDLED_CATALOG_ITEMS from "./catalog_data.json";
@@ -17,7 +18,7 @@ export const CATALOG_CATEGORIES = [
       {
         id: "predio-residencial",
         name: "Edifício Residencial",
-        description: "Prédio de apartamentos com varandas, janelas iluminadas e terraço.",
+        description: "Prédio moderno com sacadas envidraçadas, jardins e cobertura.",
         meta: "Prédio · Grande",
         previewHint: "building",
         isRoad: false,
@@ -26,8 +27,17 @@ export const CATALOG_CATEGORIES = [
       {
         id: "predio-comercial",
         name: "Torre Comercial",
-        description: "Torre espelhada de vidro e aço com fachada panorâmica e antena.",
+        description: "Torre espelhada de vidro azul e aço com cobertura iluminada e antena.",
         meta: "Prédio · Grande",
+        previewHint: "building",
+        isRoad: false,
+        kind: "creation",
+      },
+      {
+        id: "predio-torre-ouro",
+        name: "Torre Cristal & Ouro",
+        description: "Arranha-céu contemporâneo de fachada de vidro, frisos dourados e farol.",
+        meta: "Prédio · Animado · Grande",
         previewHint: "building",
         isRoad: false,
         kind: "creation",
@@ -79,7 +89,7 @@ export const CATALOG_CATEGORIES = [
       {
         id: "casa-campo",
         name: "Casa de Campo",
-        description: "Telhado cerâmico, chaminé de tijolos, varanda e floreiras.",
+        description: "Residência acolhedora com telhado cerâmico, varanda e jardim florido.",
         meta: "Casa · Médio",
         previewHint: "house",
         isRoad: false,
@@ -88,8 +98,17 @@ export const CATALOG_CATEGORIES = [
       {
         id: "casa-moderna",
         name: "Sobrado Moderno",
-        description: "Dois andares com janelas amplas, deck de madeira e jardim.",
+        description: "Arquitetura contemporânea com painéis de vidro, pergolado e jardim.",
         meta: "Casa · Médio",
+        previewHint: "house",
+        isRoad: false,
+        kind: "creation",
+      },
+      {
+        id: "casa-villa-jardim",
+        name: "Villa Contemporânea",
+        description: "Casa de alto padrão em concreto, madeira ripada, piscina e paisagismo.",
+        meta: "Casa · Grande",
         previewHint: "house",
         isRoad: false,
         kind: "creation",
@@ -143,15 +162,65 @@ export const CATALOG_CATEGORIES = [
   },
   {
     id: "carro",
-    label: "Carro",
-    summary: "Escolha o modelo de carro e clique no mapa para colocar rodando na hora.",
+    label: "Carros",
+    summary: "Carros modernos, viatura patrulha e bombeiro — todos entram e andam automaticamente nas estradas.",
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 14l1.5-5A2 2 0 0 1 8.4 7.5h7.2a2 2 0 0 1 1.9 1.5L19 14"/><rect x="3" y="13" width="18" height="5" rx="1.5"/><circle cx="7" cy="18.5" r="1.5"/><circle cx="17" cy="18.5" r="1.5"/></svg>`,
     items: [
       {
+        id: "carro-hypercar",
+        name: "Hypercar Elétrico",
+        description: "Superesportivo prata e fibra de carbono com faróis LED e aerofólio.",
+        meta: "Carro Moderno · Anda na estrada",
+        previewHint: "car",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "carro-suv-moderno",
+        name: "SUV Moderno",
+        description: "SUV branco-pérola com teto panorâmico escuro, barra LED e rodas esportivas.",
+        meta: "Carro Moderno · Anda na estrada",
+        previewHint: "car",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "carro-sedan-executivo",
+        name: "Sedan Executivo",
+        description: "Sedan azul-meia-noite aerodinâmico com grade cromada e LEDs modernos.",
+        meta: "Carro Moderno · Anda na estrada",
+        previewHint: "car",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "carro-patrulha",
+        name: "Viatura Patrulha",
+        description: "Viatura policial moderna com giroflex azul e vermelho animado.",
+        meta: "Patrulha · Anda na estrada",
+        previewHint: "car",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "carro-bombeiro",
+        name: "Caminhão Bombeiro",
+        description: "Caminhão de bombeiros com escada magirus, mangueiras e sirene giratória.",
+        meta: "Bombeiro · Anda na estrada",
+        previewHint: "car",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
         id: "carro-esportivo",
         name: "Carro Esportivo",
-        description: "Cupê vermelho rápido com aerofólio, faróis acesos e rodas giratórias.",
-        meta: "Carro · Dirige no mapa",
+        description: "Cupê esportivo vermelho com faróis LED, difusor traseiro e aerofólio.",
+        meta: "Carro · Anda na estrada",
         previewHint: "car",
         isRoad: false,
         kind: "creation",
@@ -161,7 +230,7 @@ export const CATALOG_CATEGORIES = [
         id: "carro-picape",
         name: "Picape Utilitária",
         description: "Caminhonete azul com caçamba carregada e para-choques cromados.",
-        meta: "Carro · Dirige no mapa",
+        meta: "Carro · Anda na estrada",
         previewHint: "car",
         isRoad: false,
         kind: "creation",
@@ -171,7 +240,7 @@ export const CATALOG_CATEGORIES = [
         id: "carro-classico",
         name: "Carro Clássico",
         description: "Compacto amarelo retrô com teto creme arredondado e faróis redondos.",
-        meta: "Carro · Dirige no mapa",
+        meta: "Carro · Anda na estrada",
         previewHint: "car",
         isRoad: false,
         kind: "creation",
@@ -181,7 +250,7 @@ export const CATALOG_CATEGORIES = [
         id: "carro-conversivel",
         name: "Conversível de Luxo",
         description: "Conversível turquesa elegante com interior creme e rodas cromadas.",
-        meta: "Carro · Dirige no mapa",
+        meta: "Carro · Anda na estrada",
         previewHint: "car",
         isRoad: false,
         kind: "creation",
@@ -191,7 +260,45 @@ export const CATALOG_CATEGORIES = [
         id: "carro-onibus-turistico",
         name: "Ônibus Turístico",
         description: "Ônibus vermelho de dois andares com teto panorâmico aberto.",
-        meta: "Veículo · Dirige no mapa",
+        meta: "Veículo · Anda na estrada",
+        previewHint: "car",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+    ],
+  },
+  {
+    id: "maquinas",
+    label: "Máquinas",
+    summary: "Pá carregadeira, retroescavadeira e caminhão basculante rodando pelas estradas da ilha.",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 16h11V9H8l-4 4v3Z"/><path d="M15 11h4l2 5h-6"/><circle cx="7.5" cy="18" r="2"/><circle cx="17" cy="18" r="2"/><path d="M10 9V6h4"/></svg>`,
+    items: [
+      {
+        id: "maquina-pa-carregadeira",
+        name: "Pá Carregadeira",
+        description: "Máquina pesada amarela com braço hidráulico e caçamba frontal animada.",
+        meta: "Máquina · Anda na estrada",
+        previewHint: "car",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "maquina-retroescavadeira",
+        name: "Retroescavadeira",
+        description: "Retroescavadeira com pá dianteira e lança traseira articulada animada.",
+        meta: "Máquina · Anda na estrada",
+        previewHint: "car",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "maquina-basculante",
+        name: "Caminhão Basculante",
+        description: "Caminhão de obra pesado com caçamba articulada carregada e giroflex.",
+        meta: "Máquina · Anda na estrada",
         previewHint: "car",
         isRoad: false,
         kind: "creation",
@@ -263,6 +370,106 @@ export const CATALOG_CATEGORIES = [
         previewHint: "road",
         isRoad: true,
         kind: "road",
+        useRawSpot: true,
+      },
+    ],
+  },
+  {
+    id: "agua",
+    label: "Rios e Lagos",
+    summary: "Desenhe rios cristalinos conectando cliques ou crie lagos naturais com plantas aquáticas.",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M2 17c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M2 7c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>`,
+    items: [
+      {
+        id: "agua-rio",
+        name: "Rio Cristalino",
+        description: "Rio largo de água azul brilhante com margens verdes; clique para estender.",
+        meta: "Rio · Clique para traçar",
+        previewHint: "water",
+        isRoad: true,
+        isWater: true,
+        kind: "road",
+        useRawSpot: true,
+      },
+      {
+        id: "agua-riacho",
+        name: "Riacho com Pedras",
+        description: "Riacho sinuoso cercado por pedrinhas e juncos; conecte vários pontos.",
+        meta: "Riacho · Clique para traçar",
+        previewHint: "water",
+        isRoad: true,
+        isWater: true,
+        kind: "road",
+        useRawSpot: true,
+      },
+      {
+        id: "agua-lago-natural",
+        name: "Lago Natural",
+        description: "Lago amplo com margens de pedra, taboas e água cristalina para barcos.",
+        meta: "Lago · Clique para criar",
+        previewHint: "water",
+        isRoad: false,
+        isWater: true,
+        kind: "pond",
+        useRawSpot: true,
+      },
+      {
+        id: "agua-lago-vitoria",
+        name: "Lago com Vitórias-Régias",
+        description: "Lago ornamental com flores de lótus, pedras e vegetação aquática.",
+        meta: "Lago · Clique para criar",
+        previewHint: "water",
+        isRoad: false,
+        isWater: true,
+        kind: "pond",
+        useRawSpot: true,
+      },
+    ],
+  },
+  {
+    id: "barcos",
+    label: "Barcos",
+    summary: "Lanchas, veleiros e iates que navegam nos rios, lagos ou no mar da ilha.",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l2 3h14l2-3H3Z"/><path d="M12 4v11"/><path d="M12 5l6 7h-6"/><path d="M12 7l-4.5 5H12"/></svg>`,
+    items: [
+      {
+        id: "barco-lancha",
+        name: "Lancha Moderna",
+        description: "Lancha esportiva branca e azul com para-brisa aerodinâmico e motor.",
+        meta: "Barco · Navega na água",
+        previewHint: "boat",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "barco-veleiro",
+        name: "Veleiro Clássico",
+        description: "Veleiro elegante com mastro alto, velas brancas e bandeira balançando.",
+        meta: "Barco · Navega na água",
+        previewHint: "boat",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "barco-iate",
+        name: "Iate de Luxo",
+        description: "Iate moderno de dois andares com deck de teca, vidro escuro e radar.",
+        meta: "Barco · Navega na água",
+        previewHint: "boat",
+        isRoad: false,
+        kind: "creation",
+        useRawSpot: true,
+      },
+      {
+        id: "barco-remo",
+        name: "Barco a Remo",
+        description: "Barquinho artesanal de madeira com remos perfeitos para rios e lagos.",
+        meta: "Barco · Navega na água",
+        previewHint: "boat",
+        isRoad: false,
+        kind: "creation",
         useRawSpot: true,
       },
     ],
@@ -356,8 +563,26 @@ export const CATALOG_CATEGORIES = [
       {
         id: "plantacao-vinhedo",
         name: "Vinhedo em Treliça",
-        description: "Fileiras de parreiras com cachos de uva roxa e barris de carvalho.",
+        description: "Parreiras exuberantes com cachos de uva roxa e barris de carvalho.",
         meta: "Plantação · Médio",
+        previewHint: "crop",
+        isRoad: false,
+        kind: "creation",
+      },
+      {
+        id: "planta-ipe-amarelo",
+        name: "Ipê Amarelo Florido",
+        description: "Árvore ornamental frondosa com copa dourada vibrante e flores no chão.",
+        meta: "Planta · Paisagismo",
+        previewHint: "crop",
+        isRoad: false,
+        kind: "creation",
+      },
+      {
+        id: "planta-jardim-tropical",
+        name: "Jardim Tropical & Palmeiras",
+        description: "Palmeiras esguias, bromélias coloridas e canteiro de pedras decorativas.",
+        meta: "Planta · Paisagismo",
         previewHint: "crop",
         isRoad: false,
         kind: "creation",
@@ -742,8 +967,8 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
       if (!cached) {
         cached = new THREE.MeshStandardMaterial({
           vertexColors: true,
-          roughness: 0.72,
-          metalness: 0.06,
+          roughness: 0.56,
+          metalness: 0.1,
           ...(sourceMat.polygonOffset
             ? {
                 polygonOffset: true,
@@ -806,19 +1031,28 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
       previewRenderer.toneMappingExposure = 1.12;
 
       previewScene = new THREE.Scene();
+      try {
+        const pmrem = new THREE.PMREMGenerator(previewRenderer);
+        const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+        previewScene.environment = envTex;
+        previewScene.environmentIntensity = 0.52;
+        pmrem.dispose();
+      } catch {
+        // Fallback if PMREM is unavailable
+      }
 
       previewCamera = new THREE.PerspectiveCamera(34, PREVIEW_W / PREVIEW_H, 0.1, 40);
       previewCamera.position.set(3.25, 2.38, 3.65);
       previewCamera.lookAt(0, 0.62, 0);
 
-      const hemi = new THREE.HemisphereLight(0xf6fbff, 0x7cb066, 1.45);
+      const hemi = new THREE.HemisphereLight(0xf6fbff, 0x7cb066, 1.38);
       previewScene.add(hemi);
 
-      const sun = new THREE.DirectionalLight(0xfff5dc, 1.85);
+      const sun = new THREE.DirectionalLight(0xfff7e2, 1.92);
       sun.position.set(5.2, 8.5, 6.2);
       previewScene.add(sun);
 
-      const rim = new THREE.DirectionalLight(0xc4e2ff, 0.62);
+      const rim = new THREE.DirectionalLight(0xc4e2ff, 0.68);
       rim.position.set(-5.0, 4.2, -5.0);
       previewScene.add(rim);
 
@@ -1033,9 +1267,11 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
     const wrapper = new THREE.Group();
     let innerAnim = null;
     const isPlane = item.categoryId === "aviao" || item.previewHint === "plane";
+    const isBoat = item.categoryId === "barcos" || item.previewHint === "boat";
     const isAnimal = item.categoryId === "animais" || item.previewHint === "animal";
     const isVehicle =
       item.categoryId === "carro" ||
+      item.categoryId === "maquinas" ||
       item.categoryId === "bicicleta" ||
       item.categoryId === "moto";
 
@@ -1054,7 +1290,7 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
       box.getCenter(center);
 
       const maxDim = Math.max(size.x, size.y * 1.12, size.z, 0.01);
-      const targetSpan = isPlane ? 2.55 : isVehicle ? 2.35 : 2.25;
+      const targetSpan = isPlane ? 2.55 : isBoat || isVehicle ? 2.38 : 2.26;
       const scale = targetSpan / maxDim;
 
       model.scale.setScalar(scale);
@@ -1077,6 +1313,10 @@ export function createCatalogMenuController({ dialogEl, onSelectPreset } = {}) {
           wrapper.position.y = 0.34 + Math.sin(t * 2.4) * 0.09;
           wrapper.rotation.z = Math.sin(t * 1.5) * 0.1;
           wrapper.rotation.x = Math.cos(t * 1.2) * 0.04;
+        } else if (isBoat) {
+          wrapper.position.y = 0.12 + Math.sin(t * 2.4) * 0.05;
+          wrapper.rotation.z = Math.sin(t * 2.0) * 0.055;
+          wrapper.rotation.x = Math.cos(t * 1.7) * 0.035;
         } else if (isAnimal) {
           wrapper.position.y = Math.abs(Math.sin(t * 3.6)) * 0.065;
         } else if (isVehicle) {

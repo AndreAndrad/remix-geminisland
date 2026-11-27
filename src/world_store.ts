@@ -143,6 +143,7 @@ export type PlaceCatalogItemResult =
       creation?: WorldCreation;
       path?: WorldPath;
       villager?: WorldVillager;
+      prop?: WorldProp;
       world: WorldStateSnapshot;
     }
   | { ok: false; status: 400 | 404 | 429; error: string };
@@ -1922,9 +1923,41 @@ export class WorldStore {
     const [px, pz] = clampToIsland(input.x, input.z);
     const now = Date.now();
 
+    if (preset.kind === "pond") {
+      if (this.props.length >= 340) {
+        return { ok: false, status: 429, error: "Limite máximo de lagos e elementos na ilha atingido." };
+      }
+      const newProp: WorldProp = {
+        id: `user-pond-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 6)}`,
+        kind: "pond",
+        x: px,
+        z: pz,
+        yaw: Number(((now % 628) / 100).toFixed(2)),
+        radius: preset.pondRadius ?? 7.2,
+      };
+      this.props.push(newProp);
+      this.version += 1;
+      this.schedulePersist();
+      const snap = this.getWorldSnapshot(input.cookieId, input.dayKey);
+      this.onBroadcast({
+        type: "world_updated",
+        note: `${preset.name} criado na ilha.`,
+        world: { ...this.readBaseWorld(), myCreationId: null },
+      });
+      return {
+        ok: true,
+        kind: "pond",
+        name: preset.name,
+        x: px,
+        z: pz,
+        prop: newProp,
+        world: snap,
+      };
+    }
+
     if (preset.kind === "road") {
       if (this.paths.length >= 360) {
-        return { ok: false, status: 429, error: "Limite máximo de estradas na ilha atingido." };
+        return { ok: false, status: 429, error: "Limite máximo de estradas e rios na ilha atingido." };
       }
       const hasSecond =
         typeof input.x2 === "number" &&
@@ -1932,6 +1965,7 @@ export class WorldStore {
         typeof input.z2 === "number" &&
         Number.isFinite(input.z2);
 
+      const isWaterPath = preset.pathKind === "river" || preset.pathKind === "creek";
       let p0x = px;
       let p0z = pz;
       let p1x = px;
@@ -1943,8 +1977,8 @@ export class WorldStore {
           [p1x, p1z] = clampToIsland(p0x + 12, p0z + 3);
         }
       } else {
-        // First click immediately builds a clean 14m road segment centered right where the user clicked!
-        const halfLen = 7;
+        // First click immediately builds a clean stretch centered right where the user clicked!
+        const halfLen = isWaterPath ? 9.5 : 7;
         [p0x, p0z] = clampToIsland(px - halfLen, pz);
         [p1x, p1z] = clampToIsland(px + halfLen, pz);
       }
@@ -1952,7 +1986,7 @@ export class WorldStore {
       const midX = Number(((p0x + p1x) * 0.5).toFixed(2));
       const midZ = Number(((p0z + p1z) * 0.5).toFixed(2));
       const newPath: WorldPath = {
-        id: `user-road-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 6)}`,
+        id: `user-${isWaterPath ? "water" : "road"}-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 6)}`,
         kind: preset.pathKind ?? "road",
         points: [
           [p0x, p0z],
@@ -1967,15 +2001,15 @@ export class WorldStore {
       const snap = this.getWorldSnapshot(input.cookieId, input.dayKey);
       this.onBroadcast({
         type: "world_updated",
-        note: `${preset.name} construída na ilha.`,
+        note: `${preset.name} ${isWaterPath ? "criado" : "construída"} na ilha.`,
         world: { ...this.readBaseWorld(), myCreationId: null },
       });
       return {
         ok: true,
         kind: "road",
         name: preset.name,
-        x: hasSecond ? p1x : midX,
-        z: hasSecond ? p1z : midZ,
+        x: hasSecond ? p1x : p1x,
+        z: hasSecond ? p1z : p1z,
         path: newPath,
         world: snap,
       };
@@ -2075,57 +2109,125 @@ export class WorldStore {
     let finalZ = z;
     let yaw = 0;
 
+    const chainConnectedUnclosedPaths = (
+      seedPath: WorldPath,
+      allowedKinds: Set<string>,
+      maxJoinDist = 9.0,
+    ): [number, number][] => {
+      const used = new Set<string>([seedPath.id]);
+      const pts: [number, number][] = seedPath.points.map(([wx, wz]) => [wx, wz]);
+      let extended = true;
+      let guard = 0;
+      while (extended && guard < 18) {
+        extended = false;
+        guard += 1;
+        const head = pts[0];
+        const tail = pts[pts.length - 1];
+        for (const cand of this.paths) {
+          if (used.has(cand.id) || cand.closed || !allowedKinds.has(cand.kind)) continue;
+          if (!Array.isArray(cand.points) || cand.points.length < 2) continue;
+          const cStart = cand.points[0];
+          const cEnd = cand.points[cand.points.length - 1];
+          if (Math.hypot(tail[0] - cStart[0], tail[1] - cStart[1]) <= maxJoinDist) {
+            pts.push(...cand.points.slice(1).map(([wx, wz]): [number, number] => [wx, wz]));
+            used.add(cand.id);
+            extended = true;
+            break;
+          }
+          if (Math.hypot(tail[0] - cEnd[0], tail[1] - cEnd[1]) <= maxJoinDist) {
+            const rev = [...cand.points].reverse();
+            pts.push(...rev.slice(1).map(([wx, wz]): [number, number] => [wx, wz]));
+            used.add(cand.id);
+            extended = true;
+            break;
+          }
+          if (Math.hypot(head[0] - cEnd[0], head[1] - cEnd[1]) <= maxJoinDist) {
+            pts.unshift(...cand.points.slice(0, -1).map(([wx, wz]): [number, number] => [wx, wz]));
+            used.add(cand.id);
+            extended = true;
+            break;
+          }
+          if (Math.hypot(head[0] - cStart[0], head[1] - cStart[1]) <= maxJoinDist) {
+            const rev = [...cand.points].reverse();
+            pts.unshift(...rev.slice(0, -1).map(([wx, wz]): [number, number] => [wx, wz]));
+            used.add(cand.id);
+            extended = true;
+            break;
+          }
+        }
+      }
+      return pts;
+    };
+
     if (preset.behaviorHint === "vehicle_route") {
-      // Find the nearest road within 16m of where the user clicked; otherwise spawn right where clicked!
-      let nearestRoad: WorldPath | null = null;
-      let nearestDist = Infinity;
-      let nearestPtIdx = 0;
+      // Always snap cars, patrol cars, fire trucks, and construction machinery onto the island's roads!
+      let nearestAsphalt: WorldPath | null = null;
+      let nearestAsphaltDist = Infinity;
+      let nearestAnyRoad: WorldPath | null = null;
+      let nearestAnyDist = Infinity;
+
       for (const p of this.paths) {
         if (!Array.isArray(p.points) || p.points.length < 2) continue;
-        if (p.kind !== "road" && p.kind !== "cobblestone" && p.kind !== "cottage_road" && p.kind !== "dirt_trail") {
-          continue;
-        }
+        const isAsphalt = p.kind === "road";
+        const isDrivable =
+          isAsphalt || p.kind === "cobblestone" || p.kind === "cottage_road" || p.kind === "dirt_trail";
+        if (!isDrivable) continue;
         const curve = sampleCatmullRom2D(p.points, Boolean(p.closed), 1.0);
         const hit = distPointToPolyline2D(px, pz, curve);
-        if (hit.dist < nearestDist) {
-          nearestDist = hit.dist;
-          nearestRoad = p;
-          let bestIdx = 0;
-          let bestD = Infinity;
-          for (let i = 0; i < p.points.length; i++) {
-            const d = Math.hypot(p.points[i][0] - px, p.points[i][1] - pz);
-            if (d < bestD) {
-              bestD = d;
-              bestIdx = i;
-            }
-          }
-          nearestPtIdx = bestIdx;
+        if (hit.dist < nearestAnyDist) {
+          nearestAnyDist = hit.dist;
+          nearestAnyRoad = p;
+        }
+        if (isAsphalt && hit.dist < nearestAsphaltDist) {
+          nearestAsphaltDist = hit.dist;
+          nearestAsphalt = p;
         }
       }
 
-      if (nearestRoad && nearestDist <= 16) {
-        const isClosed = Boolean(nearestRoad.closed) && nearestRoad.points.length >= 4;
-        const basePts = nearestRoad.points;
+      // Prefer a nearby secondary road if the user clicked directly on it (<=14m); otherwise ALWAYS use asphalt road!
+      const chosenRoad =
+        nearestAnyRoad && nearestAnyDist <= 14 && nearestAnyDist + 2 < nearestAsphaltDist
+          ? nearestAnyRoad
+          : nearestAsphalt ?? nearestAnyRoad;
+
+      if (chosenRoad) {
+        const isClosed = Boolean(chosenRoad.closed) && chosenRoad.points.length >= 4;
+        const basePts = isClosed
+          ? chosenRoad.points
+          : chainConnectedUnclosedPaths(
+              chosenRoad,
+              new Set(["road", "cobblestone", "cottage_road", "dirt_trail"]),
+              9.5,
+            );
+        let bestIdx = 0;
+        let bestD = Infinity;
+        for (let i = 0; i < basePts.length; i++) {
+          const d = Math.hypot(basePts[i][0] - px, basePts[i][1] - pz);
+          if (d < bestD) {
+            bestD = d;
+            bestIdx = i;
+          }
+        }
         const wps: [number, number][] = isClosed
           ? basePts.map((_, idx) => {
-              const pt = basePts[(idx + nearestPtIdx) % basePts.length];
+              const pt = basePts[(idx + bestIdx) % basePts.length];
               return [pt[0], pt[1]];
             })
-          : nearestPtIdx > basePts.length / 2
+          : bestIdx > basePts.length / 2
             ? [...basePts].reverse().map(([wx, wz]) => [wx, wz])
             : basePts.map(([wx, wz]) => [wx, wz]);
         finalX = wps[0][0];
         finalZ = wps[0][1];
         behavior = {
           type: "vehicle_route",
-          speed: preset.speed ?? 5.2,
+          speed: preset.speed ?? 5.6,
           waypoints: wps,
           stops: [],
           loopMode: isClosed ? "loop" : "pingpong",
           statusLine: bp.description,
         };
       } else {
-        // Spawn right at the clicked spot driving a smooth local loop around (px, pz)
+        // Fallback only if no road exists anywhere on the island
         const loopR = 9;
         const wps: [number, number][] = [
           clampToIsland(px, pz),
@@ -2141,6 +2243,99 @@ export class WorldStore {
           waypoints: wps,
           stops: [],
           loopMode: "loop",
+          statusLine: bp.description,
+        };
+      }
+    } else if (preset.behaviorHint === "water_float") {
+      // Snap boats onto nearby rivers/creeks, lakes, coastal ocean, or auto-create a lagoon beneath them!
+      const rawX = Number(clampCoord(input.x).toFixed(2));
+      const rawZ = Number(clampCoord(input.z).toFixed(2));
+      const rawMargin = getIslandInlandMargin(rawX, rawZ);
+
+      let nearestRiver: WorldPath | null = null;
+      let nearestRiverDist = Infinity;
+      for (const p of this.paths) {
+        if ((p.kind !== "river" && p.kind !== "creek") || !Array.isArray(p.points) || p.points.length < 2) {
+          continue;
+        }
+        const curve = sampleCatmullRom2D(p.points, Boolean(p.closed), 1.0);
+        const hit = distPointToPolyline2D(px, pz, curve);
+        if (hit.dist < nearestRiverDist) {
+          nearestRiverDist = hit.dist;
+          nearestRiver = p;
+        }
+      }
+
+      let nearestPond: WorldProp | null = null;
+      let nearestPondDist = Infinity;
+      for (const pr of this.props) {
+        if (pr.kind !== "pond") continue;
+        const d = Math.hypot(pr.x - px, pr.z - pz) - (pr.radius || 6.4);
+        if (d < nearestPondDist) {
+          nearestPondDist = d;
+          nearestPond = pr;
+        }
+      }
+
+      if (nearestRiver && nearestRiverDist <= 22 && nearestRiverDist <= nearestPondDist + 6) {
+        const wps = chainConnectedUnclosedPaths(nearestRiver, new Set(["river", "creek"]), 10.5);
+        finalX = wps[0][0];
+        finalZ = wps[0][1];
+        behavior = {
+          type: "water_float",
+          speed: preset.speed ?? 2.6,
+          pondX: wps[0][0],
+          pondZ: wps[0][1],
+          radius: 3.5,
+          waypoints: wps,
+          statusLine: bp.description,
+        };
+      } else if (nearestPond && nearestPondDist <= 18) {
+        const orbitR = Math.max(1.8, (nearestPond.radius || 6.4) * 0.52);
+        finalX = Number((nearestPond.x + orbitR).toFixed(2));
+        finalZ = nearestPond.z;
+        behavior = {
+          type: "water_float",
+          speed: preset.speed ?? 2.2,
+          pondX: nearestPond.x,
+          pondZ: nearestPond.z,
+          radius: orbitR,
+          statusLine: bp.description,
+        };
+      } else if (rawMargin < 3.5) {
+        // Placed near or on the surrounding sunlit ocean!
+        finalX = rawX;
+        finalZ = rawZ;
+        behavior = {
+          type: "water_float",
+          speed: preset.speed ?? 2.8,
+          pondX: rawX,
+          pondZ: rawZ,
+          radius: 6.5,
+          statusLine: bp.description,
+        };
+      } else {
+        // Inland away from water — create a scenic natural lake beneath the boat so it floats!
+        const lakeRadius = 6.6;
+        if (this.props.length < 340) {
+          this.props.push({
+            id: `user-pond-boat-${now.toString(36)}-${nodeCrypto.randomUUID().replace(/-/g, "").slice(0, 5)}`,
+            kind: "pond",
+            x: px,
+            z: pz,
+            yaw: 0,
+            radius: lakeRadius,
+          });
+        }
+        const orbitR = 3.2;
+        finalX = Number((px + orbitR).toFixed(2));
+        finalZ = pz;
+        behavior = {
+          type: "water_float",
+          speed: preset.speed ?? 2.2,
+          pondX: px,
+          pondZ: pz,
+          radius: orbitR,
           statusLine: bp.description,
         };
       }
